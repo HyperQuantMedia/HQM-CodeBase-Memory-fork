@@ -2109,14 +2109,14 @@ static cbm_mcp_server_t *overlay_test_server(const char *project, int64_t *nativ
     return srv;
 }
 
-#define OVERLAY_TEST_MANIFEST                                                             \
-    "{\"version\":1,\"namespace\":\"tover\",\"nodes\":["                                  \
+#define OVERLAY_TEST_MANIFEST                                                            \
+    "{\"version\":1,\"namespace\":\"tover\",\"nodes\":["                                 \
     "{\"key\":\"a\",\"label\":\"XDoc\",\"name\":\"doc-a\",\"qualified_name\":\"doc-a\"," \
-    "\"file_path\":\"docs/a.md\",\"properties\":{\"scope\":\"alpha\"}},"                  \
+    "\"file_path\":\"docs/a.md\",\"properties\":{\"scope\":\"alpha\"}},"                 \
     "{\"key\":\"b\",\"label\":\"XDoc\",\"name\":\"doc-b\",\"qualified_name\":\"doc-b\"}" \
-    "],\"edges\":["                                                                       \
-    "{\"type\":\"XREL\",\"source\":{\"key\":\"a\"},\"target\":{\"key\":\"b\"}},"          \
-    "{\"type\":\"XREL\",\"source\":{\"key\":\"a\"},"                                      \
+    "],\"edges\":["                                                                      \
+    "{\"type\":\"XREL\",\"source\":{\"key\":\"a\"},\"target\":{\"key\":\"b\"}},"         \
+    "{\"type\":\"XREL\",\"source\":{\"key\":\"a\"},"                                     \
     "\"target\":{\"qualified_name\":\"app.main\"}}]}"
 
 TEST(tool_ingest_overlay_ingests_nodes_and_edges) {
@@ -2135,8 +2135,7 @@ TEST(tool_ingest_overlay_ingests_nodes_and_edges) {
     cbm_store_t *st = cbm_mcp_server_store(srv);
     cbm_node_t *rows = NULL;
     int count = 0;
-    ASSERT_EQ(cbm_store_find_nodes_by_label(st, "ov-basic", "XDoc", &rows, &count),
-              CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_find_nodes_by_label(st, "ov-basic", "XDoc", &rows, &count), CBM_STORE_OK);
     ASSERT_EQ(count, 2);
     cbm_store_free_nodes(rows, count);
 
@@ -2177,8 +2176,7 @@ TEST(tool_ingest_overlay_reingest_is_idempotent) {
     cbm_store_t *st = cbm_mcp_server_store(srv);
     cbm_node_t *rows = NULL;
     int count = 0;
-    ASSERT_EQ(cbm_store_find_nodes_by_label(st, "ov-idem", "XDoc", &rows, &count),
-              CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_find_nodes_by_label(st, "ov-idem", "XDoc", &rows, &count), CBM_STORE_OK);
     ASSERT_EQ(count, 2);
     cbm_store_free_nodes(rows, count);
     ASSERT_EQ(cbm_store_count_edges_by_type(st, "ov-idem", "XREL"), 2);
@@ -2234,8 +2232,7 @@ TEST(tool_ingest_overlay_cannot_hijack_native_qn) {
     ASSERT_NOT_NULL(strstr(found.label, "Function"));
     cbm_node_free_fields(&found);
     memset(&found, 0, sizeof(found));
-    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-hijack", "tover:app.main", &found),
-              CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-hijack", "tover:app.main", &found), CBM_STORE_OK);
     ASSERT_NOT_NULL(strstr(found.label, "XDoc"));
     cbm_node_free_fields(&found);
 

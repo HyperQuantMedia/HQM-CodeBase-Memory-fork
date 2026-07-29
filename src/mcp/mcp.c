@@ -510,7 +510,8 @@ static const tool_def_t TOOLS[] = {
      "<project-root>/.codebase-memory/overlay.json",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
      "\"manifest_path\":{\"type\":\"string\",\"description\":"
-     "\"Path to the overlay manifest JSON (default <project-root>/.codebase-memory/overlay.json)\"},"
+     "\"Path to the overlay manifest JSON (default "
+     "<project-root>/.codebase-memory/overlay.json)\"},"
      "\"manifest\":{\"type\":\"object\",\"description\":"
      "\"Inline manifest object; takes precedence over manifest_path\"},"
      "\"dry_run\":{\"type\":\"boolean\",\"description\":"
@@ -5914,8 +5915,7 @@ static int64_t overlay_resolve_ref(cbm_store_t *store, const char *project, cons
                 CBM_STORE_OK &&
             count > 0) {
             for (int i = 0; i < count; i++) {
-                if (!want_label ||
-                    (found[i].label && strcmp(found[i].label, want_label) == 0)) {
+                if (!want_label || (found[i].label && strcmp(found[i].label, want_label) == 0)) {
                     id = found[i].id;
                     break;
                 }
@@ -6230,8 +6230,7 @@ static char *handle_ingest_overlay(cbm_mcp_server_t *srv, const char *args) {
     if (!failed && prepared_nodes > 0 && !dry_run) {
         int64_t *batch_ids = calloc((size_t)prepared_nodes, sizeof(*batch_ids));
         if (!batch_ids ||
-            cbm_store_upsert_node_batch(store, nodes, prepared_nodes, batch_ids) !=
-                CBM_STORE_OK) {
+            cbm_store_upsert_node_batch(store, nodes, prepared_nodes, batch_ids) != CBM_STORE_OK) {
             failed = true;
             fail_msg = "overlay node batch write failed";
         } else {
