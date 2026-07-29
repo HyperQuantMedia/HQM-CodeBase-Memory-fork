@@ -501,6 +501,20 @@ static const tool_def_t TOOLS[] = {
      "\"object\",\"properties\":{\"caller\":{\"type\":\"string\"},\"callee\":{\"type\":\"string\"},"
      "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}},\"project\":{\"type\":"
      "\"string\"}},\"required\":[\"traces\",\"project\"]}"},
+
+    {"ingest_overlay", "Ingest overlay",
+     "Merge a knowledge-overlay manifest (nodes/edges emitted by an external tool) into a "
+     "project's graph. The manifest declares a namespace that owns its labels and edge types: "
+     "re-ingest replaces everything under them, and labels/types already populated by other "
+     "writers are refused. Default manifest location: "
+     "<project-root>/.codebase-memory/overlay.json",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"manifest_path\":{\"type\":\"string\",\"description\":"
+     "\"Path to the overlay manifest JSON (default <project-root>/.codebase-memory/overlay.json)\"},"
+     "\"manifest\":{\"type\":\"object\",\"description\":"
+     "\"Inline manifest object; takes precedence over manifest_path\"},"
+     "\"dry_run\":{\"type\":\"boolean\",\"description\":"
+     "\"Validate and resolve without writing\"}},\"required\":[\"project\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
@@ -5758,6 +5772,610 @@ static char *handle_ingest_traces(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
+/* ── ingest_overlay ───────────────────────────────────────────── */
+
+/* Overlay manifests let external tools contribute nodes/edges to a project's
+ * graph without touching the indexer. Ownership contract: the manifest's
+ * `namespace` owns every label and edge type it declares — re-ingest deletes
+ * and re-creates all rows under them, and a label/type that already carries
+ * rows NOT stamped by that namespace is refused (protects indexer output and
+ * other overlays). Stored qualified_names are prefixed "<namespace>:" so the
+ * (project, qualified_name) upsert can never rewrite a native row. */
+
+#define OVERLAY_MAX_KINDS 64
+#define OVERLAY_MAX_NODES 100000
+#define OVERLAY_MAX_EDGES 500000
+#define OVERLAY_MAX_MANIFEST_BYTES (64u * 1024u * 1024u)
+#define OVERLAY_SKIP_SAMPLE 20
+
+static char *overlay_read_manifest_file(const char *path) {
+    FILE *fp = cbm_fopen(path, "rb");
+    if (!fp) {
+        return NULL;
+    }
+    (void)fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    if (sz <= 0 || (unsigned long)sz > OVERLAY_MAX_MANIFEST_BYTES) {
+        (void)fclose(fp);
+        return NULL;
+    }
+    (void)fseek(fp, 0, SEEK_SET);
+    char *buf = malloc((size_t)sz + SKIP_ONE);
+    if (!buf) {
+        (void)fclose(fp);
+        return NULL;
+    }
+    size_t n = fread(buf, SKIP_ONE, (size_t)sz, fp);
+    buf[n] = '\0';
+    (void)fclose(fp);
+    return buf;
+}
+
+/* True when a stored properties JSON string carries this namespace's stamp. */
+static bool overlay_props_owned(const char *props_json, const char *ns) {
+    if (!props_json || !ns) {
+        return false;
+    }
+    char stamp[CBM_SZ_256];
+    snprintf(stamp, sizeof(stamp), "\"_overlay\":\"%s\"", ns);
+    return strstr(props_json, stamp) != NULL;
+}
+
+/* Serialize a manifest properties object (may be NULL) with the namespace
+ * stamp merged in. Returns a heap string, or NULL on allocation failure. */
+static char *overlay_stamped_props(yyjson_val *props, const char *ns) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = NULL;
+    if (props && yyjson_is_obj(props)) {
+        root = yyjson_val_mut_copy(doc, props);
+    }
+    if (!root || !yyjson_mut_is_obj(root)) {
+        root = yyjson_mut_obj(doc);
+    }
+    yyjson_mut_doc_set_root(doc, root);
+    /* Remove any caller-supplied stamp so ours is authoritative. */
+    yyjson_mut_obj_remove_key(root, "_overlay");
+    yyjson_mut_obj_add_str(doc, root, "_overlay", ns);
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+/* Collect a distinct string into kinds[]; returns false past capacity. */
+static bool overlay_collect_kind(const char **kinds, int *count, const char *value) {
+    for (int i = 0; i < *count; i++) {
+        if (strcmp(kinds[i], value) == 0) {
+            return true;
+        }
+    }
+    if (*count >= OVERLAY_MAX_KINDS) {
+        return false;
+    }
+    kinds[(*count)++] = value;
+    return true;
+}
+
+/* Resolve an edge endpoint reference:
+ *   {"key": "..."}            → node declared in this manifest (by its key)
+ *   {"qualified_name": "..."} → existing node, raw qn first, then "<ns>:<qn>"
+ *   {"file_path": "..."}      → first existing node on that file path
+ * Returns the node id, or -1 when unresolved. */
+static int64_t overlay_resolve_ref(cbm_store_t *store, const char *project, const char *ns,
+                                   yyjson_val *ref, yyjson_val *nodes_arr,
+                                   const int64_t *node_ids) {
+    if (!ref || !yyjson_is_obj(ref)) {
+        return -1;
+    }
+    yyjson_val *v = yyjson_obj_get(ref, "key");
+    if (v && yyjson_is_str(v)) {
+        const char *key = yyjson_get_str(v);
+        size_t idx, max;
+        yyjson_val *node;
+        yyjson_arr_foreach(nodes_arr, idx, max, node) {
+            yyjson_val *nk = yyjson_obj_get(node, "key");
+            if (nk && yyjson_is_str(nk) && strcmp(yyjson_get_str(nk), key) == 0) {
+                return node_ids[idx] > 0 ? node_ids[idx] : -1;
+            }
+        }
+        return -1;
+    }
+    v = yyjson_obj_get(ref, "qualified_name");
+    if (v && yyjson_is_str(v)) {
+        const char *qn = yyjson_get_str(v);
+        cbm_node_t found;
+        memset(&found, 0, sizeof(found));
+        if (cbm_store_find_node_by_qn(store, project, qn, &found) == CBM_STORE_OK) {
+            int64_t id = found.id;
+            cbm_node_free_fields(&found);
+            return id;
+        }
+        char namespaced[CBM_SZ_4K];
+        snprintf(namespaced, sizeof(namespaced), "%s:%s", ns, qn);
+        if (cbm_store_find_node_by_qn(store, project, namespaced, &found) == CBM_STORE_OK) {
+            int64_t id = found.id;
+            cbm_node_free_fields(&found);
+            return id;
+        }
+        return -1;
+    }
+    v = yyjson_obj_get(ref, "file_path");
+    if (v && yyjson_is_str(v)) {
+        cbm_node_t *found = NULL;
+        int count = 0;
+        if (cbm_store_find_nodes_by_file(store, project, yyjson_get_str(v), &found, &count) ==
+                CBM_STORE_OK &&
+            count > 0) {
+            int64_t id = found[0].id;
+            cbm_store_free_nodes(found, count);
+            return id;
+        }
+        if (found) {
+            cbm_store_free_nodes(found, count);
+        }
+        return -1;
+    }
+    return -1;
+}
+
+/* Ownership guard: every existing row under this label/type must carry the
+ * namespace stamp. Returns the number of owned rows (to report as replaced),
+ * or -1 when foreign rows block the ingest. */
+static int overlay_guard_label(cbm_store_t *store, const char *project, const char *ns,
+                               const char *label) {
+    cbm_node_t *rows = NULL;
+    int count = 0;
+    if (cbm_store_find_nodes_by_label(store, project, label, &rows, &count) != CBM_STORE_OK) {
+        return 0; /* nothing stored under this label yet */
+    }
+    int owned = 0;
+    bool foreign = false;
+    for (int i = 0; i < count; i++) {
+        if (overlay_props_owned(rows[i].properties_json, ns)) {
+            owned++;
+        } else {
+            foreign = true;
+        }
+    }
+    cbm_store_free_nodes(rows, count);
+    return foreign ? -1 : owned;
+}
+
+static int overlay_guard_type(cbm_store_t *store, const char *project, const char *ns,
+                              const char *type) {
+    cbm_edge_t *rows = NULL;
+    int count = 0;
+    if (cbm_store_find_edges_by_type(store, project, type, &rows, &count) != CBM_STORE_OK) {
+        return 0;
+    }
+    int owned = 0;
+    bool foreign = false;
+    for (int i = 0; i < count; i++) {
+        if (overlay_props_owned(rows[i].properties_json, ns)) {
+            owned++;
+        } else {
+            foreign = true;
+        }
+    }
+    cbm_store_free_edges(rows, count);
+    return foreign ? -1 : owned;
+}
+
+static char *overlay_error(const char *message) {
+    return cbm_mcp_text_result(message, true);
+}
+
+static char *handle_ingest_overlay(cbm_mcp_server_t *srv, const char *args) {
+    char *project = get_project_arg(args);
+    cbm_store_t *resolved = resolve_store(srv, project);
+    REQUIRE_STORE(resolved, project);
+
+    char *not_indexed = verify_project_indexed(resolved, project);
+    if (not_indexed) {
+        free(project);
+        return not_indexed;
+    }
+
+    bool dry_run = cbm_mcp_get_bool_arg(args, "dry_run");
+
+    /* Locate the manifest: inline object wins, else file path, else default. */
+    yyjson_doc *args_doc = yyjson_read(args, strlen(args), 0);
+    yyjson_val *manifest = NULL;
+    if (args_doc) {
+        manifest = yyjson_obj_get(yyjson_doc_get_root(args_doc), "manifest");
+        if (manifest && !yyjson_is_obj(manifest)) {
+            manifest = NULL;
+        }
+    }
+    char *file_buf = NULL;
+    yyjson_doc *file_doc = NULL;
+    if (!manifest) {
+        char *manifest_path = cbm_mcp_get_string_arg(args, "manifest_path");
+        char default_path[CBM_SZ_4K];
+        if (!manifest_path) {
+            char *root_path = get_project_root(srv, project);
+            if (!root_path) {
+                if (args_doc) {
+                    yyjson_doc_free(args_doc);
+                }
+                free(project);
+                return overlay_error(
+                    "no manifest given and the project root is unknown — pass manifest or "
+                    "manifest_path");
+            }
+            snprintf(default_path, sizeof(default_path), "%s/.codebase-memory/overlay.json",
+                     root_path);
+            free(root_path);
+        }
+        file_buf = overlay_read_manifest_file(manifest_path ? manifest_path : default_path);
+        if (!file_buf) {
+            char msg[CBM_SZ_4K];
+            snprintf(msg, sizeof(msg), "overlay manifest not readable: %s",
+                     manifest_path ? manifest_path : default_path);
+            free(manifest_path);
+            if (args_doc) {
+                yyjson_doc_free(args_doc);
+            }
+            free(project);
+            return overlay_error(msg);
+        }
+        free(manifest_path);
+        file_doc = yyjson_read(file_buf, strlen(file_buf), 0);
+        if (!file_doc) {
+            free(file_buf);
+            if (args_doc) {
+                yyjson_doc_free(args_doc);
+            }
+            free(project);
+            return overlay_error("overlay manifest is not valid JSON");
+        }
+        manifest = yyjson_doc_get_root(file_doc);
+    }
+
+#define OVERLAY_BAIL(msg_literal)          \
+    do {                                   \
+        if (file_doc) {                    \
+            yyjson_doc_free(file_doc);     \
+        }                                  \
+        free(file_buf);                    \
+        if (args_doc) {                    \
+            yyjson_doc_free(args_doc);     \
+        }                                  \
+        free(project);                     \
+        return overlay_error(msg_literal); \
+    } while (0)
+
+    if (!manifest || !yyjson_is_obj(manifest)) {
+        OVERLAY_BAIL("overlay manifest must be a JSON object");
+    }
+    yyjson_val *v_version = yyjson_obj_get(manifest, "version");
+    if (!v_version || !yyjson_is_int(v_version) || yyjson_get_int(v_version) != 1) {
+        OVERLAY_BAIL("unsupported overlay manifest version (expected 1)");
+    }
+    yyjson_val *v_ns = yyjson_obj_get(manifest, "namespace");
+    const char *ns = v_ns && yyjson_is_str(v_ns) ? yyjson_get_str(v_ns) : NULL;
+    if (!ns || ns[0] == '\0' || strlen(ns) >= CBM_SZ_256 / 2 || strchr(ns, '"') ||
+        strchr(ns, '\\')) {
+        OVERLAY_BAIL("overlay manifest needs a plain string namespace");
+    }
+    yyjson_val *nodes_arr = yyjson_obj_get(manifest, "nodes");
+    yyjson_val *edges_arr = yyjson_obj_get(manifest, "edges");
+    if ((nodes_arr && !yyjson_is_arr(nodes_arr)) || (edges_arr && !yyjson_is_arr(edges_arr))) {
+        OVERLAY_BAIL("overlay nodes/edges must be arrays");
+    }
+    size_t node_count = nodes_arr ? yyjson_arr_size(nodes_arr) : 0;
+    size_t edge_count = edges_arr ? yyjson_arr_size(edges_arr) : 0;
+    if (node_count > OVERLAY_MAX_NODES || edge_count > OVERLAY_MAX_EDGES) {
+        OVERLAY_BAIL("overlay manifest exceeds node/edge limits");
+    }
+
+    /* Distinct labels and edge types — the namespaces the manifest claims. */
+    const char *labels[OVERLAY_MAX_KINDS];
+    const char *types[OVERLAY_MAX_KINDS];
+    int label_count = 0, type_count = 0;
+    {
+        size_t idx, max;
+        yyjson_val *item;
+        yyjson_arr_foreach(nodes_arr, idx, max, item) {
+            yyjson_val *lv = yyjson_obj_get(item, "label");
+            if (lv && yyjson_is_str(lv) && yyjson_get_str(lv)[0] != '\0') {
+                if (!overlay_collect_kind(labels, &label_count, yyjson_get_str(lv))) {
+                    OVERLAY_BAIL("overlay manifest declares too many distinct labels");
+                }
+            }
+        }
+        yyjson_arr_foreach(edges_arr, idx, max, item) {
+            yyjson_val *tv = yyjson_obj_get(item, "type");
+            if (tv && yyjson_is_str(tv) && yyjson_get_str(tv)[0] != '\0') {
+                if (!overlay_collect_kind(types, &type_count, yyjson_get_str(tv))) {
+                    OVERLAY_BAIL("overlay manifest declares too many distinct edge types");
+                }
+            }
+        }
+    }
+
+    /* Ownership guard before any write. */
+    int replaced_nodes = 0, replaced_edges = 0;
+    for (int i = 0; i < label_count; i++) {
+        int owned = overlay_guard_label(resolved, project, ns, labels[i]);
+        if (owned < 0) {
+            char msg[CBM_SZ_4K];
+            snprintf(msg, sizeof(msg),
+                     "label '%s' already has rows not owned by namespace '%s' — refusing",
+                     labels[i], ns);
+            OVERLAY_BAIL(msg);
+        }
+        replaced_nodes += owned;
+    }
+    for (int i = 0; i < type_count; i++) {
+        int owned = overlay_guard_type(resolved, project, ns, types[i]);
+        if (owned < 0) {
+            char msg[CBM_SZ_4K];
+            snprintf(msg, sizeof(msg),
+                     "edge type '%s' already has rows not owned by namespace '%s' — refusing",
+                     types[i], ns);
+            OVERLAY_BAIL(msg);
+        }
+        replaced_edges += owned;
+    }
+
+    /* Writable handle (resolve_store opens file-backed stores read-only). */
+    cbm_store_t *store = resolved;
+    cbm_store_t *owned_rw = NULL;
+    const char *resolved_db_path = cbm_store_db_path(resolved);
+    if (!dry_run && resolved_db_path) {
+        owned_rw = cbm_store_open_path(resolved_db_path);
+        if (!owned_rw) {
+            OVERLAY_BAIL("could not open the project store for writing");
+        }
+        store = owned_rw;
+    }
+
+#undef OVERLAY_BAIL
+
+    /* From here on, cleanup happens through the shared tail below. */
+    bool failed = false;
+    const char *fail_msg = NULL;
+
+    /* Replace phase: the namespace re-claims its labels and types. */
+    if (!dry_run) {
+        for (int i = 0; i < label_count && !failed; i++) {
+            if (cbm_store_delete_nodes_by_label(store, project, labels[i]) != CBM_STORE_OK) {
+                failed = true;
+                fail_msg = "failed deleting an owned label before re-ingest";
+            }
+        }
+        for (int i = 0; i < type_count && !failed; i++) {
+            if (cbm_store_delete_edges_by_type(store, project, types[i]) != CBM_STORE_OK) {
+                failed = true;
+                fail_msg = "failed deleting an owned edge type before re-ingest";
+            }
+        }
+    }
+
+    /* Node phase. */
+    cbm_node_t *nodes = NULL;
+    int64_t *node_ids = NULL;
+    char **node_props = NULL;
+    char **node_qns = NULL;
+    int prepared_nodes = 0;
+    int skipped_nodes = 0;
+    if (!failed && node_count > 0) {
+        nodes = calloc(node_count, sizeof(*nodes));
+        node_ids = calloc(node_count, sizeof(*node_ids));
+        node_props = calloc(node_count, sizeof(*node_props));
+        node_qns = calloc(node_count, sizeof(*node_qns));
+        if (!nodes || !node_ids || !node_props || !node_qns) {
+            failed = true;
+            fail_msg = "overlay ingest allocation failure";
+        }
+    }
+    if (!failed && node_count > 0) {
+        size_t idx, max;
+        yyjson_val *item;
+        yyjson_arr_foreach(nodes_arr, idx, max, item) {
+            node_ids[idx] = -1;
+            if (!yyjson_is_obj(item)) {
+                skipped_nodes++;
+                continue;
+            }
+            yyjson_val *lv = yyjson_obj_get(item, "label");
+            yyjson_val *nv = yyjson_obj_get(item, "name");
+            if (!lv || !yyjson_is_str(lv) || yyjson_get_str(lv)[0] == '\0' || !nv ||
+                !yyjson_is_str(nv) || yyjson_get_str(nv)[0] == '\0') {
+                skipped_nodes++;
+                continue;
+            }
+            yyjson_val *qv = yyjson_obj_get(item, "qualified_name");
+            const char *raw_qn = qv && yyjson_is_str(qv) && yyjson_get_str(qv)[0] != '\0'
+                                     ? yyjson_get_str(qv)
+                                     : yyjson_get_str(nv);
+            size_t qn_len = strlen(ns) + SKIP_ONE + strlen(raw_qn) + SKIP_ONE;
+            node_qns[idx] = malloc(qn_len);
+            node_props[idx] = overlay_stamped_props(yyjson_obj_get(item, "properties"), ns);
+            if (!node_qns[idx] || !node_props[idx]) {
+                failed = true;
+                fail_msg = "overlay ingest allocation failure";
+                break;
+            }
+            snprintf(node_qns[idx], qn_len, "%s:%s", ns, raw_qn);
+
+            yyjson_val *fv = yyjson_obj_get(item, "file_path");
+            yyjson_val *sv = yyjson_obj_get(item, "start_line");
+            yyjson_val *ev = yyjson_obj_get(item, "end_line");
+            cbm_node_t *n = &nodes[prepared_nodes];
+            n->project = project;
+            n->label = yyjson_get_str(lv);
+            n->name = yyjson_get_str(nv);
+            n->qualified_name = node_qns[idx];
+            n->file_path = fv && yyjson_is_str(fv) ? yyjson_get_str(fv) : NULL;
+            n->start_line = sv && yyjson_is_int(sv) ? (int)yyjson_get_int(sv) : SKIP_ONE;
+            n->end_line = ev && yyjson_is_int(ev) ? (int)yyjson_get_int(ev) : n->start_line;
+            n->properties_json = node_props[idx];
+            prepared_nodes++;
+        }
+    }
+    int written_nodes = 0;
+    if (!failed && prepared_nodes > 0 && !dry_run) {
+        int64_t *batch_ids = calloc((size_t)prepared_nodes, sizeof(*batch_ids));
+        if (!batch_ids ||
+            cbm_store_upsert_node_batch(store, nodes, prepared_nodes, batch_ids) !=
+                CBM_STORE_OK) {
+            failed = true;
+            fail_msg = "overlay node batch write failed";
+        } else {
+            written_nodes = prepared_nodes;
+            /* Map batch ids back onto manifest positions (skipped stay -1). */
+            int bi = 0;
+            for (size_t idx = 0; idx < node_count; idx++) {
+                if (node_qns[idx] && node_props[idx]) {
+                    node_ids[idx] = batch_ids[bi++];
+                }
+            }
+        }
+        free(batch_ids);
+    }
+
+    /* Edge phase. */
+    cbm_edge_t *edges = NULL;
+    char **edge_props = NULL;
+    int prepared_edges = 0;
+    int skipped_edges = 0;
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_val *skip_samples = yyjson_mut_arr(doc);
+    if (!failed && edge_count > 0 && !dry_run) {
+        edges = calloc(edge_count, sizeof(*edges));
+        edge_props = calloc(edge_count, sizeof(*edge_props));
+        if (!edges || !edge_props) {
+            failed = true;
+            fail_msg = "overlay ingest allocation failure";
+        }
+    }
+    if (!failed && edge_count > 0 && !dry_run) {
+        size_t idx, max;
+        yyjson_val *item;
+        yyjson_arr_foreach(edges_arr, idx, max, item) {
+            if (!yyjson_is_obj(item)) {
+                skipped_edges++;
+                continue;
+            }
+            yyjson_val *tv = yyjson_obj_get(item, "type");
+            if (!tv || !yyjson_is_str(tv) || yyjson_get_str(tv)[0] == '\0') {
+                skipped_edges++;
+                continue;
+            }
+            int64_t src = overlay_resolve_ref(store, project, ns, yyjson_obj_get(item, "source"),
+                                              nodes_arr, node_ids);
+            int64_t dst = overlay_resolve_ref(store, project, ns, yyjson_obj_get(item, "target"),
+                                              nodes_arr, node_ids);
+            if (src < 0 || dst < 0) {
+                skipped_edges++;
+                if (yyjson_mut_arr_size(skip_samples) < OVERLAY_SKIP_SAMPLE) {
+                    char sample[CBM_SZ_256];
+                    snprintf(sample, sizeof(sample), "%s edge #%zu: %s endpoint unresolved",
+                             yyjson_get_str(tv), idx, src < 0 ? "source" : "target");
+                    yyjson_mut_arr_add_strcpy(doc, skip_samples, sample);
+                }
+                continue;
+            }
+            edge_props[prepared_edges] =
+                overlay_stamped_props(yyjson_obj_get(item, "properties"), ns);
+            if (!edge_props[prepared_edges]) {
+                failed = true;
+                fail_msg = "overlay ingest allocation failure";
+                break;
+            }
+            cbm_edge_t *e = &edges[prepared_edges];
+            e->project = project;
+            e->source_id = src;
+            e->target_id = dst;
+            e->type = yyjson_get_str(tv);
+            e->properties_json = edge_props[prepared_edges];
+            prepared_edges++;
+        }
+    }
+    int written_edges = 0;
+    if (!failed && prepared_edges > 0) {
+        if (cbm_store_insert_edge_batch(store, edges, prepared_edges) != CBM_STORE_OK) {
+            failed = true;
+            fail_msg = "overlay edge batch write failed";
+        } else {
+            written_edges = prepared_edges;
+        }
+    }
+
+    /* Response. */
+    if (failed) {
+        yyjson_mut_obj_add_str(doc, root, "status", "error");
+        yyjson_mut_obj_add_str(doc, root, "error", fail_msg ? fail_msg : "overlay ingest failed");
+    } else {
+        yyjson_mut_obj_add_str(doc, root, "status", dry_run ? "dry_run" : "ingested");
+        yyjson_mut_obj_add_strcpy(doc, root, "namespace", ns);
+        yyjson_mut_obj_add_int(doc, root, "nodes_written", written_nodes);
+        yyjson_mut_obj_add_int(doc, root, "edges_written", written_edges);
+        yyjson_mut_obj_add_int(doc, root, "nodes_skipped", skipped_nodes);
+        yyjson_mut_obj_add_int(doc, root, "edges_skipped", skipped_edges);
+        yyjson_mut_obj_add_int(doc, root, "replaced_nodes", replaced_nodes);
+        yyjson_mut_obj_add_int(doc, root, "replaced_edges", replaced_edges);
+        yyjson_mut_val *lbls = yyjson_mut_arr(doc);
+        for (int i = 0; i < label_count; i++) {
+            yyjson_mut_arr_add_strcpy(doc, lbls, labels[i]);
+        }
+        yyjson_mut_obj_add_val(doc, root, "labels", lbls);
+        yyjson_mut_val *typs = yyjson_mut_arr(doc);
+        for (int i = 0; i < type_count; i++) {
+            yyjson_mut_arr_add_strcpy(doc, typs, types[i]);
+        }
+        yyjson_mut_obj_add_val(doc, root, "edge_types", typs);
+    }
+    yyjson_mut_obj_add_val(doc, root, "skipped_samples", skip_samples);
+
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+
+    /* Shared cleanup tail. */
+    if (node_props) {
+        for (size_t i = 0; i < node_count; i++) {
+            free(node_props[i]);
+        }
+    }
+    if (node_qns) {
+        for (size_t i = 0; i < node_count; i++) {
+            free(node_qns[i]);
+        }
+    }
+    free(node_props);
+    free(node_qns);
+    free(nodes);
+    free(node_ids);
+    if (edge_props) {
+        for (int i = 0; i < prepared_edges; i++) {
+            free(edge_props[i]);
+        }
+    }
+    free(edge_props);
+    free(edges);
+    if (owned_rw) {
+        cbm_store_close(owned_rw);
+    }
+    if (file_doc) {
+        yyjson_doc_free(file_doc);
+    }
+    free(file_buf);
+    if (args_doc) {
+        yyjson_doc_free(args_doc);
+    }
+    free(project);
+
+    char *result = cbm_mcp_text_result(json, failed);
+    free(json);
+    return result;
+}
+
 /* ── Tool dispatch ────────────────────────────────────────────── */
 
 char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const char *args_json) {
@@ -5808,6 +6426,9 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     }
     if (strcmp(tool_name, "ingest_traces") == 0) {
         return handle_ingest_traces(srv, args_json);
+    }
+    if (strcmp(tool_name, "ingest_overlay") == 0) {
+        return handle_ingest_overlay(srv, args_json);
     }
     char msg[CBM_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);

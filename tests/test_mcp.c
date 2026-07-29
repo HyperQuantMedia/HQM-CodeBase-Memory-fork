@@ -2080,6 +2080,169 @@ TEST(tool_manage_adr_get_with_existing_adr) {
     PASS();
 }
 
+/* ── ingest_overlay ─────────────────────────────────────────────── */
+
+/* Seed a server with one native node so the project passes
+ * verify_project_indexed and gives overlay edges a native endpoint. */
+static cbm_mcp_server_t *overlay_test_server(const char *project, int64_t *native_id_out) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    if (!srv) {
+        return NULL;
+    }
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_store_upsert_project(st, project, "/tmp/overlay-test-root");
+    cbm_node_t native;
+    memset(&native, 0, sizeof(native));
+    native.project = project;
+    native.label = "Function";
+    native.name = "main";
+    native.qualified_name = "app.main";
+    native.file_path = "src/app.c";
+    native.start_line = 1;
+    native.end_line = 10;
+    native.properties_json = "{}";
+    int64_t id = cbm_store_upsert_node(st, &native);
+    if (native_id_out) {
+        *native_id_out = id;
+    }
+    cbm_mcp_server_set_project(srv, project);
+    return srv;
+}
+
+#define OVERLAY_TEST_MANIFEST                                                             \
+    "{\"version\":1,\"namespace\":\"tover\",\"nodes\":["                                  \
+    "{\"key\":\"a\",\"label\":\"XDoc\",\"name\":\"doc-a\",\"qualified_name\":\"doc-a\"," \
+    "\"file_path\":\"docs/a.md\",\"properties\":{\"scope\":\"alpha\"}},"                  \
+    "{\"key\":\"b\",\"label\":\"XDoc\",\"name\":\"doc-b\",\"qualified_name\":\"doc-b\"}" \
+    "],\"edges\":["                                                                       \
+    "{\"type\":\"XREL\",\"source\":{\"key\":\"a\"},\"target\":{\"key\":\"b\"}},"          \
+    "{\"type\":\"XREL\",\"source\":{\"key\":\"a\"},"                                      \
+    "\"target\":{\"qualified_name\":\"app.main\"}}]}"
+
+TEST(tool_ingest_overlay_ingests_nodes_and_edges) {
+    cbm_mcp_server_t *srv = overlay_test_server("ov-basic", NULL);
+    ASSERT_NOT_NULL(srv);
+
+    char args[1024];
+    snprintf(args, sizeof(args), "{\"project\":\"ov-basic\",\"manifest\":%s}",
+             OVERLAY_TEST_MANIFEST);
+    char *resp = cbm_mcp_handle_tool(srv, "ingest_overlay", args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "ingested"));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_node_t *rows = NULL;
+    int count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_label(st, "ov-basic", "XDoc", &rows, &count),
+              CBM_STORE_OK);
+    ASSERT_EQ(count, 2);
+    cbm_store_free_nodes(rows, count);
+
+    /* Stored qualified_name is namespaced — raw form must NOT resolve. */
+    cbm_node_t found;
+    memset(&found, 0, sizeof(found));
+    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-basic", "tover:doc-a", &found), CBM_STORE_OK);
+    ASSERT_NOT_NULL(strstr(found.properties_json, "\"_overlay\":\"tover\""));
+    cbm_node_free_fields(&found);
+    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-basic", "doc-a", &found), CBM_STORE_NOT_FOUND);
+
+    /* Both edges landed: overlay→overlay and overlay→native. */
+    ASSERT_EQ(cbm_store_count_edges_by_type(st, "ov-basic", "XREL"), 2);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_ingest_overlay_reingest_is_idempotent) {
+    cbm_mcp_server_t *srv = overlay_test_server("ov-idem", NULL);
+    ASSERT_NOT_NULL(srv);
+
+    char args[1024];
+    snprintf(args, sizeof(args), "{\"project\":\"ov-idem\",\"manifest\":%s}",
+             OVERLAY_TEST_MANIFEST);
+    char *resp = cbm_mcp_handle_tool(srv, "ingest_overlay", args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "ingested"));
+    free(resp);
+
+    resp = cbm_mcp_handle_tool(srv, "ingest_overlay", args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "ingested"));
+    /* Second pass replaces the first: the namespace re-claimed 2 nodes. */
+    ASSERT_NOT_NULL(strstr(resp, "\"replaced_nodes\":2"));
+    free(resp);
+
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_node_t *rows = NULL;
+    int count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_label(st, "ov-idem", "XDoc", &rows, &count),
+              CBM_STORE_OK);
+    ASSERT_EQ(count, 2);
+    cbm_store_free_nodes(rows, count);
+    ASSERT_EQ(cbm_store_count_edges_by_type(st, "ov-idem", "XREL"), 2);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_ingest_overlay_refuses_foreign_label) {
+    cbm_mcp_server_t *srv = overlay_test_server("ov-guard", NULL);
+    ASSERT_NOT_NULL(srv);
+
+    /* "Function" already has an unstamped (indexer) row — must refuse. */
+    const char *args =
+        "{\"project\":\"ov-guard\",\"manifest\":{\"version\":1,\"namespace\":\"tover\","
+        "\"nodes\":[{\"label\":\"Function\",\"name\":\"fake\"}],\"edges\":[]}}";
+    char *resp = cbm_mcp_handle_tool(srv, "ingest_overlay", args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "not owned by namespace"));
+    free(resp);
+
+    /* The native row is untouched. */
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_node_t found;
+    memset(&found, 0, sizeof(found));
+    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-guard", "app.main", &found), CBM_STORE_OK);
+    ASSERT_NOT_NULL(strstr(found.label, "Function"));
+    cbm_node_free_fields(&found);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_ingest_overlay_cannot_hijack_native_qn) {
+    cbm_mcp_server_t *srv = overlay_test_server("ov-hijack", NULL);
+    ASSERT_NOT_NULL(srv);
+
+    /* Overlay node claims the native qualified_name; namespacing must keep
+     * the native row intact instead of rewriting it via upsert conflict. */
+    const char *args =
+        "{\"project\":\"ov-hijack\",\"manifest\":{\"version\":1,\"namespace\":\"tover\","
+        "\"nodes\":[{\"label\":\"XDoc\",\"name\":\"impostor\","
+        "\"qualified_name\":\"app.main\"}],\"edges\":[]}}";
+    char *resp = cbm_mcp_handle_tool(srv, "ingest_overlay", args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "ingested"));
+    free(resp);
+
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_node_t found;
+    memset(&found, 0, sizeof(found));
+    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-hijack", "app.main", &found), CBM_STORE_OK);
+    ASSERT_NOT_NULL(strstr(found.label, "Function"));
+    cbm_node_free_fields(&found);
+    memset(&found, 0, sizeof(found));
+    ASSERT_EQ(cbm_store_find_node_by_qn(st, "ov-hijack", "tover:app.main", &found),
+              CBM_STORE_OK);
+    ASSERT_NOT_NULL(strstr(found.label, "XDoc"));
+    cbm_node_free_fields(&found);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
 /* issue #256: manage_adr (MCP) and the UI /api/adr endpoints must share ONE
  * backend. A manage_adr(update) write must be readable via cbm_store_adr_get
  * (the exact API the UI's /api/adr GET uses). */
@@ -5080,6 +5243,10 @@ SUITE(mcp) {
     RUN_TEST(tool_detect_changes_no_project);
     RUN_TEST(tool_manage_adr_no_project);
     RUN_TEST(tool_manage_adr_get_with_existing_adr);
+    RUN_TEST(tool_ingest_overlay_ingests_nodes_and_edges);
+    RUN_TEST(tool_ingest_overlay_reingest_is_idempotent);
+    RUN_TEST(tool_ingest_overlay_refuses_foreign_label);
+    RUN_TEST(tool_ingest_overlay_cannot_hijack_native_qn);
     RUN_TEST(tool_manage_adr_unified_backend_issue256);
     RUN_TEST(tool_index_repository_reports_store_backed_adr);
     RUN_TEST(tool_index_repository_dot_uses_absolute_project_key_and_preserves_adr);
