@@ -3,6 +3,9 @@
 # Security (security-static + codeql-gate) starts immediately and runs in
 # parallel with lint/test/build/smoke/soak. It only blocks the final verify
 # step — everything else proceeds independently.
+#
+# HQM edition: releases are dispatched from the HQM-dev branch (--ref HQM-dev)
+# and tagged <upstream-version>-hqm-v<hqm-semver>, e.g. v0.9.0-hqm-v0.1.0.
 name: Release
 
 on:
