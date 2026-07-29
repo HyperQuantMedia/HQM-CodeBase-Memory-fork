@@ -5861,7 +5861,9 @@ static bool overlay_collect_kind(const char **kinds, int *count, const char *val
 /* Resolve an edge endpoint reference:
  *   {"key": "..."}            → node declared in this manifest (by its key)
  *   {"qualified_name": "..."} → existing node, raw qn first, then "<ns>:<qn>"
- *   {"file_path": "..."}      → first existing node on that file path
+ *   {"file_path": "..."}      → first existing node on that file path; an
+ *                               optional "label" narrows the match (e.g. the
+ *                               File node rather than a function in the file)
  * Returns the node id, or -1 when unresolved. */
 static int64_t overlay_resolve_ref(cbm_store_t *store, const char *project, const char *ns,
                                    yyjson_val *ref, yyjson_val *nodes_arr,
@@ -5903,19 +5905,26 @@ static int64_t overlay_resolve_ref(cbm_store_t *store, const char *project, cons
     }
     v = yyjson_obj_get(ref, "file_path");
     if (v && yyjson_is_str(v)) {
+        yyjson_val *lv = yyjson_obj_get(ref, "label");
+        const char *want_label = lv && yyjson_is_str(lv) ? yyjson_get_str(lv) : NULL;
         cbm_node_t *found = NULL;
         int count = 0;
+        int64_t id = -1;
         if (cbm_store_find_nodes_by_file(store, project, yyjson_get_str(v), &found, &count) ==
                 CBM_STORE_OK &&
             count > 0) {
-            int64_t id = found[0].id;
-            cbm_store_free_nodes(found, count);
-            return id;
+            for (int i = 0; i < count; i++) {
+                if (!want_label ||
+                    (found[i].label && strcmp(found[i].label, want_label) == 0)) {
+                    id = found[i].id;
+                    break;
+                }
+            }
         }
         if (found) {
             cbm_store_free_nodes(found, count);
         }
-        return -1;
+        return id;
     }
     return -1;
 }
