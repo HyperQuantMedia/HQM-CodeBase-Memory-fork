@@ -12,12 +12,32 @@ const LABEL_COLORS: Record<string, string> = {
   Method: "#06b6d4",
   Route: "#eab308",
   Variable: "#64748b",
+  /* Overlay labels (ingest_overlay) — knowledge documents of any trade:
+   * markdown, PDF, sheets, slides, images. Emitting tools may declare any
+   * label; these are the common ones. */
+  Document: "#fbbf24",
+  External: "#a78bfa",
+  Missing: "#fb7185",
+  Image: "#34d399",
+  Sheet: "#4ade80",
+  Slide: "#fb923c",
 };
 
-const DEFAULT_COLOR = "#94a3b8";
+/* Unknown labels (overlay ingests can declare any label) get a stable,
+ * distinct hue from a hash instead of one shared grey — otherwise every
+ * foreign label renders identically and the filter chips lose meaning. */
+function hashHueColor(label: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < label.length; i++) {
+    h ^= label.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const hue = ((h >>> 0) % 360 + 360) % 360;
+  return `hsl(${hue} 62% 62%)`;
+}
 
 export function colorForLabel(label: string): string {
-  return LABEL_COLORS[label] ?? DEFAULT_COLOR;
+  return LABEL_COLORS[label] ?? hashHueColor(label);
 }
 
 /* Dead-code status → color (matches layout3d.c status strings).
