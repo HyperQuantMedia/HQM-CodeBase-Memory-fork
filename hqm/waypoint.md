@@ -34,6 +34,12 @@ review** followed. Rounds 1–4 found 16 visual defects the green suite never sa
 size map became a fourth-projection view of the same hierarchy, and both tabs now share one
 shell. 212 tests green, binary rebuilt, served.
 
+Two CI defects were found and fixed the same day, both in files nobody was working on — surfaced
+only because an editor false positive (**B8**) sent us reading them: `nightly-soak.yml` called a
+workflow that declared no `workflow_call` and passed an input it never had, and both soak
+workflows declared `type: number` on a `workflow_dispatch` input, which is illegal. `7825f288`,
+`dce7050c`.
+
 **The live edge is the owner's visual verification of rounds 5–8** — logged as **B1** in
 [`bugs.md`](bugs.md), with the specific surfaces and the one open question (the size
 projections' density). Three of the first four rounds produced corrections nothing local
@@ -140,10 +146,21 @@ suite as evidence that a visual change works.
 - **Branches:** `HQM-dev` = active dev · `vanilla-upstream` = upstream pull-in only ·
   `Merged` = integration · `main` = stable face of Merged, repo default. **Promotion is
   HQM-dev → Merged → main. Never HQM-dev → main, never a direct commit on main.**
-- **CI is dark** (owner order): every registered workflow `disabled_manually`. Build and
-  validate locally. Crons and dispatched workflows are read from the *default* branch, so a
-  CI-config fix only takes effect once it reaches main. Re-enable with
-  `gh workflow enable <file> --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
+- **CI is mostly dark** (owner order). Build and validate locally. Verify the real state
+  rather than trusting this list — `gh workflow list --all --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
+  As of 2026-07-30: `disabled_manually` = CodeQL SAST, DCO, Deploy Pages, Release, OpenSSF
+  Scorecard, Stale, **Nightly Soak**. Still **active** = Security Gate, and Dependency Graph
+  (GitHub-managed, cannot be disabled with `gh workflow disable`).
+  - **Nightly Soak was `active` until 2026-07-30** despite its header comment implying the
+    cron removal had handled it. Removing a cron stops the schedule; it does not disable the
+    workflow. Two independent means are now in place. Check state, do not infer it from a
+    comment.
+  - Crons and dispatched workflows are read from the *default* branch, so a CI-config fix only
+    takes effect once it reaches main. Re-enable with
+    `gh workflow enable <file> --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
+- **Ignore the 7 "Unable to find reusable workflow" errors** VS Code shows on the same-repo
+  `uses:` lines in `release.yml` and `nightly-soak.yml`. Editor false positive, evidence and the
+  rejected "fix" recorded as **B8** in [`bugs.md`](bugs.md). Do not rewrite those paths.
 - Release `v0.9.0-hqm-v0.1.0` exists as a **draft** with every platform asset built; publish by
   hand with
   `gh release edit v0.9.0-hqm-v0.1.0 --draft=false --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
