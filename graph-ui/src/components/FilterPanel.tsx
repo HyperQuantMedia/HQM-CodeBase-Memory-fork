@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { colorForLabel, STATUS_LEGEND } from "../lib/colors";
 import type { GraphData } from "../lib/types";
+import { CollapsibleSection } from "./CollapsibleSection";
 
 interface FilterPanelProps {
   data: GraphData;
@@ -77,6 +78,12 @@ export function FilterPanel({
   onToggleHideEntryPoints,
   onToggleHideTests,
 }: FilterPanelProps) {
+  /* Dead code folds independently of the filter chips — it is a different job
+   * (a code-health lens, not a type filter). Open by default: it was always
+   * visible before this panel became collapsible, and the ask was to make it
+   * foldable, not to hide it. */
+  const [deadOpen, setDeadOpen] = useState(true);
+
   const { labelCounts, edgeTypeCounts, statusCounts } = useMemo(() => {
     const lc = new Map<string, number>();
     for (const n of data.nodes) lc.set(n.label, (lc.get(n.label) ?? 0) + 1);
@@ -95,17 +102,13 @@ export function FilterPanel({
   const deadCount = statusCounts.get("dead") ?? 0;
 
   return (
-    <div className="flex flex-col shrink-0 max-h-[45%] border-b border-border/40">
-      {/* Header row — always visible */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-        <span className="text-[11px] font-medium text-foreground/50 uppercase tracking-widest">
-          Filters
-        </span>
-        <div className="flex items-center gap-2">
-          <button onClick={onEnableAll} className="text-[10px] text-primary/70 hover:text-primary transition-colors">All</button>
-          <span className="text-foreground/15">|</span>
-          <button onClick={onDisableAll} className="text-[10px] text-primary/70 hover:text-primary transition-colors">None</button>
-        </div>
+    <div className="flex flex-col min-h-0">
+      {/* Enable/disable all — the section title itself lives in the
+          CollapsibleSection wrapper that GraphTab supplies. */}
+      <div className="flex items-center justify-end gap-2 px-4 pb-1.5 shrink-0">
+        <button onClick={onEnableAll} className="text-[10px] text-primary/70 hover:text-primary transition-colors">All</button>
+        <span className="text-foreground/15">|</span>
+        <button onClick={onDisableAll} className="text-[10px] text-primary/70 hover:text-primary transition-colors">None</button>
       </div>
 
       {/* Scrollable filter groups */}
@@ -124,11 +127,11 @@ export function FilterPanel({
                       key={label}
                       onClick={() => onToggleLabel(label)}
                       className={`inline-flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[10px] font-medium transition-all border ${
-                        on ? "border-white/[0.08] bg-white/[0.04]" : "border-transparent opacity-25"
+                        on ? "border-border/60 bg-foreground/[0.04]" : "border-transparent opacity-25"
                       }`}
                     >
-                      <span className="w-[5px] h-[5px] rounded-full" style={{ backgroundColor: on ? c : "#444" }} />
-                      <span style={{ color: on ? c : "#555" }}>{label}</span>
+                      <span className="w-[5px] h-[5px] rounded-full" style={{ backgroundColor: on ? c : "#7b7b7b" }} />
+                      <span style={{ color: on ? c : "#8a8a8a" }}>{label}</span>
                       <span className="text-foreground/20 tabular-nums">{count.toLocaleString()}</span>
                     </button>
                   );
@@ -149,7 +152,7 @@ export function FilterPanel({
                       key={type}
                       onClick={() => onToggleEdgeType(type)}
                       className={`inline-flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[10px] font-medium transition-all border ${
-                        on ? "border-white/[0.06] bg-white/[0.03] text-foreground/60" : "border-transparent opacity-20 text-foreground/30"
+                        on ? "border-border/50 bg-foreground/[0.03] text-foreground/60" : "border-transparent opacity-20 text-foreground/30"
                       }`}
                     >
                       {type.replace(/_/g, " ").toLowerCase()}
@@ -164,50 +167,54 @@ export function FilterPanel({
       </ScrollArea>
 
       {/* Dead-code view */}
-      <div className="px-4 pt-2 border-t border-border/30 space-y-2 shrink-0">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-foreground/30 uppercase tracking-widest">
-            Dead code
-          </span>
-          <span className="text-[10px] text-red-400/80 tabular-nums">
-            {deadCount.toLocaleString()} dead
-          </span>
-        </div>
+      <div className="border-t border-border/30 shrink-0">
+        <CollapsibleSection
+          title="Dead code"
+          open={deadOpen}
+          onToggle={() => setDeadOpen((v) => !v)}
+          actions={
+            <span className="text-[10px] text-destructive/80 tabular-nums">
+              {deadCount.toLocaleString()} dead
+            </span>
+          }
+        >
+          <div className="px-4 pb-2 space-y-2">
+            <CheckRow
+              checked={deadCodeView}
+              onToggle={onToggleDeadCodeView}
+              label="Color by status"
+            />
+            <CheckRow
+              checked={showOnlyDead}
+              onToggle={onToggleShowOnlyDead}
+              label="Show only dead code"
+            />
+            <CheckRow
+              checked={hideEntryPoints}
+              onToggle={onToggleHideEntryPoints}
+              label="Hide entry points"
+            />
+            <CheckRow checked={hideTests} onToggle={onToggleHideTests} label="Hide tests" />
 
-        <CheckRow
-          checked={deadCodeView}
-          onToggle={onToggleDeadCodeView}
-          label="Color by status"
-        />
-        <CheckRow
-          checked={showOnlyDead}
-          onToggle={onToggleShowOnlyDead}
-          label="Show only dead code"
-        />
-        <CheckRow
-          checked={hideEntryPoints}
-          onToggle={onToggleHideEntryPoints}
-          label="Hide entry points"
-        />
-        <CheckRow checked={hideTests} onToggle={onToggleHideTests} label="Hide tests" />
-
-        {/* Legend (only meaningful while colored by status) */}
-        {deadCodeView && (
-          <div className="flex flex-wrap gap-x-2 gap-y-1 pt-1">
-            {STATUS_LEGEND.map((s) => (
-              <span
-                key={s.status}
-                className="inline-flex items-center gap-1 text-[9px] text-foreground/40"
-              >
-                <span
-                  className="w-[6px] h-[6px] rounded-full"
-                  style={{ backgroundColor: s.color }}
-                />
-                {s.label}
-              </span>
-            ))}
+            {/* Legend (only meaningful while colored by status) */}
+            {deadCodeView && (
+              <div className="flex flex-wrap gap-x-2 gap-y-1 pt-1">
+                {STATUS_LEGEND.map((s) => (
+                  <span
+                    key={s.status}
+                    className="inline-flex items-center gap-1 text-[9px] text-foreground/40"
+                  >
+                    <span
+                      className="w-[6px] h-[6px] rounded-full"
+                      style={{ backgroundColor: s.color }}
+                    />
+                    {s.label}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </CollapsibleSection>
       </div>
 
       {/* Display options — pinned footer */}

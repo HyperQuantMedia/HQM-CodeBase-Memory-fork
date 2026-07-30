@@ -1,6 +1,6 @@
 /* Node label → color mapping for sidebar/tooltips (structural meaning) */
 
-const LABEL_COLORS: Record<string, string> = {
+export const LABEL_COLORS: Record<string, string> = {
   Project: "#e11d48",
   Package: "#f97316",
   Module: "#f97316",
@@ -36,7 +36,23 @@ function hashHueColor(label: string): string {
   return `hsl(${hue} 62% 62%)`;
 }
 
+/* User overrides from the settings Colors tab, installed once at startup and
+ * whenever the user edits them. Kept as module state (rather than threaded
+ * through every call site) because colorForLabel is called from render paths
+ * and non-React code alike — a single source that both read. */
+let labelOverrides: Record<string, string> = {};
+
+export function setLabelColorOverrides(overrides: Record<string, string>) {
+  labelOverrides = overrides;
+}
+
 export function colorForLabel(label: string): string {
+  return labelOverrides[label] ?? LABEL_COLORS[label] ?? hashHueColor(label);
+}
+
+/* The palette default for a label, ignoring overrides — what the Colors tab
+ * resets back to. */
+export function defaultColorForLabel(label: string): string {
   return LABEL_COLORS[label] ?? hashHueColor(label);
 }
 

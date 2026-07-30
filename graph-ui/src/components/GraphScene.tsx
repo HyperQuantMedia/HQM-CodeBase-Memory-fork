@@ -8,6 +8,7 @@ import { NodeCloud } from "./NodeCloud";
 import { EdgeLines } from "./EdgeLines";
 import { NodeLabels } from "./NodeLabels";
 import { NodeTooltip } from "./NodeTooltip";
+import { PathLight } from "./PathLight";
 import type { GraphData, GraphNode, LinkedProject } from "../lib/types";
 import {
   DEFAULT_DISPLAY_SETTINGS,
@@ -15,6 +16,7 @@ import {
   nodeBoostScale,
   type DisplaySettings,
 } from "../lib/density";
+import type { PathLightStyle } from "../lib/viewSettings";
 
 const BASE_BLOOM_INTENSITY = 1.45;
 
@@ -117,9 +119,33 @@ interface GraphSceneProps {
   showLabels: boolean;
   display?: DisplaySettings;
   onNodeClick: (node: GraphNode) => void;
+  /** Camera field of view, degrees (Settings → View). */
+  fov?: number;
+  /** Ordered node ids root→selection for the path light; empty disables it. */
+  lightPath?: number[];
+  pathLightStyle?: PathLightStyle;
+  pathLightSpeed?: number;
+  /** Light colour; empty follows the theme accent. */
+  pathLightColor?: string;
+  /** Canvas clear colour, so the scene follows the light/dark theme. */
+  background?: string;
 }
 
 export type { CameraTarget };
+
+/* The camera's fov is fixed at construction by <Canvas camera={…}>, so changing
+ * it later needs an explicit push onto the live camera object. */
+function FovSync({ fov }: { fov: number }) {
+  const { camera } = useThree();
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    if (cam.isPerspectiveCamera && cam.fov !== fov) {
+      cam.fov = fov;
+      cam.updateProjectionMatrix();
+    }
+  }, [camera, fov]);
+  return null;
+}
 
 export function GraphScene({
   data,
@@ -128,6 +154,12 @@ export function GraphScene({
   showLabels,
   display = DEFAULT_DISPLAY_SETTINGS,
   onNodeClick,
+  fov = 50,
+  lightPath,
+  pathLightStyle = "comet",
+  pathLightSpeed = 1,
+  pathLightColor = "",
+  background = "#06090f",
 }: GraphSceneProps) {
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
@@ -143,8 +175,8 @@ export function GraphScene({
 
   return (
     <Canvas
-      camera={{ position: [0, 0, 800], fov: 50, near: 0.1, far: 100000 }}
-      style={{ background: "#06090f" }}
+      camera={{ position: [0, 0, 800], fov, near: 0.1, far: 100000 }}
+      style={{ background }}
       dpr={GRAPH_CANVAS_DPR}
       gl={{
         antialias: false,
@@ -152,7 +184,8 @@ export function GraphScene({
         powerPreference: "high-performance",
       }}
     >
-      <color attach="background" args={["#06090f"]} />
+      <color attach="background" args={[background]} />
+      <FovSync fov={fov} />
       <ambientLight intensity={0.5} />
       <pointLight position={[500, 500, 500]} intensity={0.6} />
       <pointLight
@@ -216,6 +249,16 @@ export function GraphScene({
           </group>
         );
       })}
+
+      {lightPath && lightPath.length > 1 && (
+        <PathLight
+          path={lightPath}
+          nodes={data.nodes}
+          color={pathLightColor || "#ffce6e"}
+          style={pathLightStyle}
+          speed={pathLightSpeed}
+        />
+      )}
 
       {hovered && <NodeTooltip node={hovered} />}
 

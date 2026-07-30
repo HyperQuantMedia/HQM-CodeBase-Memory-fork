@@ -8,12 +8,23 @@ import {
   GRAPH_NODE_BUDGET_MAX,
 } from "../hooks/useGraphData";
 import { GraphLoader } from "./GraphLoader";
-import { DisplaySettingsMenu } from "./DisplaySettingsMenu";
+import { SettingsMenu } from "./SettingsMenu";
 import {
   loadDisplaySettings,
   saveDisplaySettings,
   type DisplaySettings,
 } from "../lib/density";
+import {
+  loadViewSettings,
+  saveViewSettings,
+  type ViewSettings,
+} from "../lib/viewSettings";
+import {
+  applyViewMode,
+  computeCrumbs,
+  computePathToRoot,
+  deriveHierarchy,
+} from "../lib/viewLayout";
 import {
   GraphScene,
   computeCameraTarget,
@@ -24,8 +35,13 @@ import { FilterPanel } from "./FilterPanel";
 import { NodeDetailPanel } from "./NodeDetailPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { CollapsibleSection } from "./CollapsibleSection";
+import { Breadcrumb } from "./Breadcrumb";
+import { HelpModal } from "./HelpModal";
 import type { GraphNode, GraphData, RepoInfo } from "../lib/types";
-import { colorForStatus } from "../lib/colors";
+import { colorForLabel, colorForStatus, setLabelColorOverrides } from "../lib/colors";
+import { downloadStaticPage } from "../lib/exportStatic";
+import { resolvedTheme, themeVar } from "../lib/theme";
 
 /* Persist panel widths */
 function loadWidth(key: string, fallback: number): number {
@@ -37,6 +53,19 @@ function loadWidth(key: string, fallback: number): number {
 }
 function saveWidth(key: string, value: number) {
   try { localStorage.setItem(key, String(Math.round(value))); } catch { /* ignore */ }
+}
+
+/* Persist which sidebar panels are open */
+function loadFlag(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === "0") return false;
+    if (v === "1") return true;
+  } catch { /* ignore */ }
+  return fallback;
+}
+function saveFlag(key: string, value: boolean) {
+  try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ }
 }
 
 /* Persist the node budget per project */
@@ -78,8 +107,53 @@ export function GraphTab({ project }: GraphTabProps) {
     setDisplay(next);
     saveDisplaySettings(next);
   }, []);
+  const [view, setView] = useState<ViewSettings>(() => loadViewSettings());
+  const updateView = useCallback((next: ViewSettings) => {
+    setView(next);
+    saveViewSettings(next);
+    setLabelColorOverrides(next.labelColors);
+  }, []);
+  /* Colour overrides live in module state so non-React callers see them too —
+   * install the persisted set once at mount. */
+  useEffect(() => {
+    setLabelColorOverrides(view.labelColors);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
+
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
   const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
+  const [filtersOpen, setFiltersOpen] = useState(() => loadFlag("cbm-filters-open", true));
+  const [foldersOpen, setFoldersOpen] = useState(() => loadFlag("cbm-folders-open", true));
+  const [helpOpen, setHelpOpen] = useState(false);
+  /* Re-read themed CSS vars whenever the theme flips (the 3D canvas clears with
+   * a literal colour, so it cannot inherit one). */
+  const [themeTick, setThemeTick] = useState(0);
+  const canvasBg = useMemo(
+    () => themeVar("--color-canvas", resolvedTheme() === "light" ? "#eef1f8" : "#06090f"),
+    [themeTick],
+  );
+  useEffect(() => {
+    const onTheme = () => setThemeTick((t) => t + 1);
+    window.addEventListener("cbm-theme-change", onTheme);
+    return () => window.removeEventListener("cbm-theme-change", onTheme);
+  }, []);
+
+  /* Esc clears the selection — the escape hatch the help modal documents.
+   * Skipped while typing so it does not fight the search box. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      setHighlightedIds(null);
+      setSelectedPath(null);
+      setSelectedNode(null);
+      setCameraTarget(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   const limitNotice = formatGraphLimitNotice(data);
 
   /* Node budget — keyed to its project so switching projects re-reads the
@@ -171,6 +245,61 @@ export function GraphTab({ project }: GraphTabProps) {
     hideEntryPoints,
     hideTests,
   ]);
+
+  /* Hierarchy of the filtered graph — one derivation feeding the alternate
+   * layouts, the breadcrumb, and the path light. */
+  const hierarchy = useMemo(
+    () => (filteredData ? deriveHierarchy(filteredData.nodes, filteredData.edges) : null),
+    [filteredData],
+  );
+
+  /* The graph handed to the renderer: server positions by default, reprojected
+   * client-side for the sphere/cone/tree views. */
+  const viewData: GraphData | null = useMemo(() => {
+    if (!filteredData) return null;
+    if (view.mode === "default" || !hierarchy) return filteredData;
+    return {
+      ...filteredData,
+      nodes: applyViewMode(
+        filteredData.nodes,
+        filteredData.edges,
+        view.mode,
+        view.layout,
+        hierarchy,
+      ),
+    };
+  }, [filteredData, hierarchy, view.mode, view.layout]);
+
+  /* Breadcrumb + path light both key off the single selected node. */
+  const crumbs = useMemo(
+    () => (selectedNode && hierarchy ? computeCrumbs(selectedNode.id, hierarchy) : []),
+    [selectedNode, hierarchy],
+  );
+  const lightPath = useMemo(() => {
+    if (!view.pathLight || !selectedNode || !hierarchy) return undefined;
+    return computePathToRoot(selectedNode.id, hierarchy);
+  }, [view.pathLight, selectedNode, hierarchy]);
+
+  const labelsInGraph = useMemo(
+    () => (data ? [...new Set(data.nodes.map((n) => n.label))] : []),
+    [data],
+  );
+
+  const handleExport = useCallback(() => {
+    if (!viewData || !project) return;
+    const labelColors: Record<string, string> = {};
+    for (const label of new Set(viewData.nodes.map((n) => n.label))) {
+      labelColors[label] = view.labelColors[label] ?? colorForLabel(label);
+    }
+    downloadStaticPage({
+      project,
+      nodes: viewData.nodes,
+      edges: viewData.edges,
+      theme: resolvedTheme(),
+      labelColors,
+      generatedAt: new Date().toISOString(),
+    });
+  }, [viewData, project, view.labelColors]);
 
   /* Re-read the persisted budget when the project changes… */
   useEffect(() => {
@@ -330,33 +459,66 @@ export function GraphTab({ project }: GraphTabProps) {
     <div className="h-full flex">
       {/* Left sidebar — resizable */}
       <div
-        className="border-r border-border/30 flex flex-col h-full bg-[#0b1920]/90 backdrop-blur-md shrink-0"
+        className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
         style={{ width: leftWidth }}
       >
-        <FilterPanel
-          data={data}
-          enabledLabels={enabledLabels}
-          enabledEdgeTypes={enabledEdgeTypes}
-          showLabels={showLabels}
-          onToggleLabel={toggleLabel}
-          onToggleEdgeType={toggleEdgeType}
-          onToggleShowLabels={() => setShowLabels((v) => !v)}
-          onEnableAll={enableAll}
-          onDisableAll={disableAll}
-          deadCodeView={deadCodeView}
-          showOnlyDead={showOnlyDead}
-          hideEntryPoints={hideEntryPoints}
-          hideTests={hideTests}
-          onToggleDeadCodeView={() => setDeadCodeView((v) => !v)}
-          onToggleShowOnlyDead={() => setShowOnlyDead((v) => !v)}
-          onToggleHideEntryPoints={() => setHideEntryPoints((v) => !v)}
-          onToggleHideTests={() => setHideTests((v) => !v)}
-        />
-        <Sidebar
-          nodes={filteredData.nodes}
-          onSelectPath={handleSelectPath}
-          selectedPath={selectedPath}
-        />
+        {/* Filters at the top, folders below — either can fold away to give the
+            other the whole column. */}
+        <CollapsibleSection
+          title="Filters"
+          open={filtersOpen}
+          onToggle={() =>
+            setFiltersOpen((v) => {
+              saveFlag("cbm-filters-open", !v);
+              return !v;
+            })
+          }
+          className={`border-b border-border/40 ${filtersOpen ? "max-h-[55%] shrink-0" : "shrink-0"}`}
+        >
+          <FilterPanel
+            data={data}
+            enabledLabels={enabledLabels}
+            enabledEdgeTypes={enabledEdgeTypes}
+            showLabels={showLabels}
+            onToggleLabel={toggleLabel}
+            onToggleEdgeType={toggleEdgeType}
+            onToggleShowLabels={() => setShowLabels((v) => !v)}
+            onEnableAll={enableAll}
+            onDisableAll={disableAll}
+            deadCodeView={deadCodeView}
+            showOnlyDead={showOnlyDead}
+            hideEntryPoints={hideEntryPoints}
+            hideTests={hideTests}
+            onToggleDeadCodeView={() => setDeadCodeView((v) => !v)}
+            onToggleShowOnlyDead={() => setShowOnlyDead((v) => !v)}
+            onToggleHideEntryPoints={() => setHideEntryPoints((v) => !v)}
+            onToggleHideTests={() => setHideTests((v) => !v)}
+          />
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title="Folders"
+          open={foldersOpen}
+          onToggle={() =>
+            setFoldersOpen((v) => {
+              saveFlag("cbm-folders-open", !v);
+              return !v;
+            })
+          }
+          className={foldersOpen ? "flex-1" : "shrink-0"}
+          actions={
+            <span className="text-[10px] text-foreground/25 tabular-nums">
+              {filteredData.nodes.length.toLocaleString()}
+            </span>
+          }
+        >
+          <Sidebar
+            nodes={filteredData.nodes}
+            onSelectPath={handleSelectPath}
+            selectedPath={selectedPath}
+            project={project}
+          />
+        </CollapsibleSection>
       </div>
       <ResizeHandle
         side="left"
@@ -384,14 +546,25 @@ export function GraphTab({ project }: GraphTabProps) {
           <>
             <ErrorBoundary>
               <GraphScene
-                data={filteredData}
+                data={viewData ?? filteredData}
                 highlightedIds={highlightedIds}
                 cameraTarget={cameraTarget}
                 showLabels={showLabels}
                 display={display}
                 onNodeClick={handleNodeClick}
+                fov={view.fov}
+                lightPath={lightPath}
+                pathLightStyle={view.pathLightStyle}
+                pathLightSpeed={view.pathLightSpeed}
+                pathLightColor={view.pathLightColor}
+                background={canvasBg}
               />
             </ErrorBoundary>
+
+            {crumbs.length > 0 && (
+              <Breadcrumb crumbs={crumbs} root={project} onSelect={handleSelectPath} />
+            )}
+            {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
             {/* HUD */}
             <div className="absolute top-4 left-4 text-[11px] text-white/30 pointer-events-none font-mono">
@@ -428,7 +601,7 @@ export function GraphTab({ project }: GraphTabProps) {
                   Clear selection
                 </Button>
               )}
-              <div className="flex items-center gap-1.5 h-8 px-2 rounded-md border border-border/50 bg-[#0b1920]/80 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5 h-8 px-2 rounded-md border border-border/50 bg-card/80 backdrop-blur-sm">
                 <label
                   htmlFor="node-budget"
                   className="text-[10px] uppercase tracking-wider text-white/40"
@@ -454,7 +627,30 @@ export function GraphTab({ project }: GraphTabProps) {
                   title="How many nodes to load (5,000 steps, edges between loaded nodes follow automatically)"
                 />
               </div>
-              <DisplaySettingsMenu settings={display} onChange={updateDisplay} />
+              <SettingsMenu
+                display={display}
+                onDisplayChange={updateDisplay}
+                view={view}
+                onViewChange={updateView}
+                labels={labelsInGraph}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+                title="Save this filtered view as a self-contained HTML file"
+              >
+                Export
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setHelpOpen(true)}
+                aria-label="Help"
+                title="How the graph works"
+              >
+                ?
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

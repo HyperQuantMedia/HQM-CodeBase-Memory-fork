@@ -39,6 +39,7 @@
 #include <sqlite3/sqlite3.h>
 #include <yyjson/yyjson.h>
 
+#include <ctype.h> /* isalpha — drive-letter check in handle_open */
 #include <errno.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -48,9 +49,11 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h> /* ShellExecuteW — open a path with its OS handler */
 #include <process.h>
 #include <psapi.h> /* GetProcessMemoryInfo */
 #else
+#include <fcntl.h> /* open(/dev/null) in the OS-handler launcher */
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -638,6 +641,176 @@ static void handle_process_kill(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 #endif
 
     cbm_http_replyf(c, 200, g_cors_json, "{\"killed\":%d}", target_pid);
+}
+
+/* ── Open on disk ─────────────────────────────────────────────── */
+
+/* Look up a project's indexed root_path. Returns false when the project is
+ * unknown or was indexed without a recorded root. */
+static bool project_root_path(const char *project, char *out, size_t out_sz) {
+    char db_path[1024];
+    db_path_for_project(project, db_path, sizeof(db_path));
+    if (db_path[0] == '\0' || !cbm_file_exists(db_path)) {
+        return false;
+    }
+    cbm_store_t *store = cbm_store_open_path(db_path);
+    if (!store) {
+        return false;
+    }
+    cbm_project_t proj;
+    memset(&proj, 0, sizeof(proj));
+    bool ok = false;
+    if (cbm_store_get_project(store, project, &proj) == CBM_STORE_OK && proj.root_path &&
+        proj.root_path[0]) {
+        snprintf(out, out_sz, "%s", proj.root_path);
+        ok = true;
+    }
+    cbm_project_free_fields(&proj);
+    cbm_store_close(store);
+    return ok;
+}
+
+/* Hand a path to the OS default handler. argv-style / ShellExecute — never a
+ * shell string — so a filename containing shell metacharacters cannot inject.
+ * Returns false when the launcher could not be started. */
+static bool launch_with_os_handler(const char *abs_path) {
+#ifdef _WIN32
+    /* shell32 is already linked (WIN32_LIBS). ShellExecuteW resolves the file
+     * association for a file and opens an Explorer window for a directory. */
+    wchar_t *wpath = cbm_utf8_to_wide(abs_path);
+    if (!wpath) {
+        return false;
+    }
+    HINSTANCE rc = ShellExecuteW(NULL, L"open", wpath, NULL, NULL, SW_SHOWNORMAL);
+    free(wpath);
+    /* ShellExecute returns a pseudo-HINSTANCE; <= 32 means failure. */
+    return (INT_PTR)rc > 32;
+#else
+#ifdef __APPLE__
+    const char *launcher = "open";
+#else
+    const char *launcher = "xdg-open";
+#endif
+    pid_t pid = fork();
+    if (pid < 0) {
+        return false;
+    }
+    if (pid == 0) {
+        /* Detach from the server's stdio so a chatty launcher cannot write into
+         * the response stream, then exec argv-style. */
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > STDERR_FILENO) {
+                close(devnull);
+            }
+        }
+        setsid();
+        execlp(launcher, launcher, abs_path, (char *)NULL);
+        _exit(127);
+    }
+    /* Reap without blocking on the viewer application's lifetime: the launcher
+     * itself exits immediately once it has handed off. */
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return true;
+#endif
+}
+
+/* POST /api/open — body: {"project":"…","path":"rel/or/abs","kind":"file"|"folder"}
+ *
+ * Opens a path from an indexed project with the user's default application.
+ * FENCED: the resolved path must exist and must sit inside that project's
+ * indexed root (cbm_path_within_root collapses `..` and resolves symlinks), so
+ * neither a crafted request nor a hostile indexed path can reach outside the
+ * corpus. The server binds to loopback only, but this endpoint launches
+ * programs, so it gets the same containment guard as the MCP file readers rather
+ * than trusting its caller. */
+static void handle_open(cbm_http_conn_t *c, const cbm_http_req_t *req) {
+    if (req->body_len == 0 || req->body_len > 4096) {
+        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid body\"}");
+        return;
+    }
+    yyjson_doc *doc = yyjson_read(req->body, req->body_len, 0);
+    if (!doc) {
+        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid json\"}");
+        return;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *v_project = yyjson_obj_get(root, "project");
+    yyjson_val *v_path = yyjson_obj_get(root, "path");
+    yyjson_val *v_kind = yyjson_obj_get(root, "kind");
+    if (!v_project || !yyjson_is_str(v_project) || !v_path || !yyjson_is_str(v_path) ||
+        yyjson_get_str(v_project)[0] == '\0' || yyjson_get_str(v_path)[0] == '\0') {
+        yyjson_doc_free(doc);
+        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"missing project or path\"}");
+        return;
+    }
+    char project[256];
+    char rel[1024];
+    snprintf(project, sizeof(project), "%s", yyjson_get_str(v_project));
+    snprintf(rel, sizeof(rel), "%s", yyjson_get_str(v_path));
+    bool want_folder =
+        v_kind && yyjson_is_str(v_kind) && strcmp(yyjson_get_str(v_kind), "folder") == 0;
+    yyjson_doc_free(doc);
+
+    char root_path[1024] = {0};
+    if (!project_root_path(project, root_path, sizeof(root_path))) {
+        cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"project not found or has no root\"}");
+        return;
+    }
+    cbm_normalize_path_sep(root_path);
+    cbm_normalize_path_sep(rel);
+
+    /* Accept either a project-relative path (what the graph carries) or an
+     * absolute one; both must land inside the root either way. */
+    char abs_path[2176];
+    bool absolute = rel[0] == '/' || (isalpha((unsigned char)rel[0]) && rel[1] == ':');
+    if (absolute) {
+        snprintf(abs_path, sizeof(abs_path), "%s", rel);
+    } else {
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", root_path, rel);
+    }
+
+    if (!cbm_file_exists(abs_path) && !cbm_is_dir(abs_path)) {
+        cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"path does not exist\"}");
+        return;
+    }
+    if (!cbm_path_within_root(root_path, abs_path)) {
+        cbm_log_warn("ui.open.refused", "project", project, "path", rel);
+        cbm_http_replyf(c, 403, g_cors_json,
+                        "{\"error\":\"path is outside the indexed project root\"}");
+        return;
+    }
+
+    /* "folder" on a file means reveal its directory. */
+    char target[2176];
+    snprintf(target, sizeof(target), "%s", abs_path);
+    if (want_folder && !cbm_is_dir(target)) {
+        char *slash = strrchr(target, '/');
+        if (slash && slash != target) {
+            *slash = '\0';
+        }
+        if (!cbm_is_dir(target)) {
+            cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"no containing folder\"}");
+            return;
+        }
+        /* Re-check: the parent is still required to be inside the root. */
+        if (!cbm_path_within_root(root_path, target)) {
+            cbm_http_replyf(c, 403, g_cors_json,
+                            "{\"error\":\"path is outside the indexed project root\"}");
+            return;
+        }
+    }
+
+    if (!launch_with_os_handler(target)) {
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"could not launch the OS handler\"}");
+        return;
+    }
+    cbm_log_info("ui.open", "kind", want_folder ? "folder" : "file", "project", project);
+    cbm_http_replyf(c, 200, g_cors_json, "{\"opened\":true}");
 }
 
 /* ── Directory browser ────────────────────────────────────────── */
@@ -1701,6 +1874,12 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
     /* GET /api/browse → directory browser for file picker */
     if (is_get && cbm_http_path_match(req->path, "/api/browse*")) {
         handle_browse(c, req);
+        return;
+    }
+
+    /* POST /api/open → open a project path with the OS default application */
+    if (is_post && cbm_http_path_match(req->path, "/api/open")) {
+        handle_open(c, req);
         return;
     }
 

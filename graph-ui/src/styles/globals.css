@@ -23,8 +23,74 @@
   --color-ring: #ffce6e;
   --radius: 0.75rem;
   --color-sidebar: #0b0c22;
+  --color-canvas: #06090f;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Light theme — daylight-sky counterpart of the celestial palette. Same role
+ * mapping, inverted values; the north-star gold deepens to amber so it stays
+ * legible as an accent on white. Declared in two places so the page follows the
+ * OS by default and an explicit choice always wins:
+ *   1. the media query, scoped with :where() so it never beats data-theme
+ *   2. the [data-theme="light"] attribute the toggle sets
+ * `@theme inline` means every bg-background / text-foreground utility resolves
+ * through var(--color-*), so redefining the vars re-themes the whole app with
+ * no component changes. */
+@media (prefers-color-scheme: light) {
+  :root:where(:not([data-theme="dark"])) {
+    color-scheme: light;
+    --color-background: #f7f8fc;
+    --color-foreground: #14162b;
+    --color-card: #ffffff;
+    --color-card-foreground: #14162b;
+    --color-popover: #ffffff;
+    --color-popover-foreground: #14162b;
+    --color-primary: #a86a00;
+    --color-primary-foreground: #fffdf6;
+    --color-secondary: #eceef7;
+    --color-secondary-foreground: #3c4260;
+    --color-muted: #eceef7;
+    --color-muted-foreground: #5c6284;
+    --color-accent: #dfe3f2;
+    --color-accent-foreground: #14162b;
+    --color-destructive: #c53030;
+    --color-destructive-foreground: #fffdf6;
+    --color-border: #9aa2c81f;
+    --color-input: #ffffffcc;
+    --color-ring: #a86a00;
+    --color-sidebar: #f0f2f9;
+    --color-canvas: #eef1f8;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-background: #f7f8fc;
+  --color-foreground: #14162b;
+  --color-card: #ffffff;
+  --color-card-foreground: #14162b;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #14162b;
+  --color-primary: #a86a00;
+  --color-primary-foreground: #fffdf6;
+  --color-secondary: #eceef7;
+  --color-secondary-foreground: #3c4260;
+  --color-muted: #eceef7;
+  --color-muted-foreground: #5c6284;
+  --color-accent: #dfe3f2;
+  --color-accent-foreground: #14162b;
+  --color-destructive: #c53030;
+  --color-destructive-foreground: #fffdf6;
+  --color-border: #9aa2c81f;
+  --color-input: #ffffffcc;
+  --color-ring: #a86a00;
+  --color-sidebar: #f0f2f9;
+  --color-canvas: #eef1f8;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 html, body, #root {

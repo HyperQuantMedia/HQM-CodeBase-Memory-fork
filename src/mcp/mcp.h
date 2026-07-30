@@ -162,4 +162,12 @@ struct cbm_pipeline *cbm_mcp_server_active_pipeline(cbm_mcp_server_t *srv);
  * On Windows, strips leading / from /C:/path. */
 bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size);
 
+/* ── Path containment guard ────────────────────────────────────── */
+
+/* True only when abs_path, after realpath/_fullpath resolution (which collapses
+ * `..` and resolves symlinks/junctions), stays inside root_path. Every sink that
+ * turns an indexed path back into filesystem access routes through this: the MCP
+ * snippet/search readers, and the UI's open-on-disk endpoint. */
+bool cbm_path_within_root(const char *root_path, const char *abs_path);
+
 #endif /* CBM_MCP_H */

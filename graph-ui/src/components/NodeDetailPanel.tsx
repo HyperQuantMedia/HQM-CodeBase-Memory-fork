@@ -3,6 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { colorForLabel } from "../lib/colors";
 import { callTool } from "../api/rpc";
 import type { GraphNode, GraphEdge, RepoInfo } from "../lib/types";
+import { OpenButtons } from "./OpenButtons";
 
 interface Connection {
   node: GraphNode;
@@ -159,11 +160,13 @@ export function NodeDetailPanel({
               href={ghUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-2.5 py-1 rounded-md bg-white/[0.05] text-foreground/60 text-[11px] font-medium hover:bg-white/[0.09] hover:text-foreground/90 transition-colors"
+              className="px-2.5 py-1 rounded-md bg-foreground/[0.05] text-foreground/60 text-[11px] font-medium hover:bg-foreground/[0.09] hover:text-foreground/90 transition-colors"
             >
               Open on GitHub ↗
             </a>
           )}
+          {/* Local counterparts to the GitHub link: hand the path to the OS. */}
+          <OpenButtons project={project} path={node.file_path} />
         </div>
 
         {codeError && <p className="text-[11px] text-red-400/80 mt-2">{codeError}</p>}

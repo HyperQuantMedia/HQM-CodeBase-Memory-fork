@@ -4,6 +4,8 @@ import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
 import type { TabId } from "./lib/types";
 import { useUiMessages } from "./lib/i18n";
+import { ThemeToggle } from "./components/ThemeToggle";
+import { initTheme } from "./lib/theme";
 
 const TAB_IDS: TabId[] = ["graph", "stats", "control"];
 
@@ -41,6 +43,11 @@ export function App() {
     window.history.replaceState(null, "", routeUrl(initial.tab, initial.project));
   }, []);
 
+  /* Restore a stored theme choice; absent one, the page follows the OS. */
+  useEffect(() => {
+    initTheme();
+  }, []);
+
   /* Sync state when the user navigates with the browser back/forward buttons. */
   useEffect(() => {
     const onPopState = () => setRoute(readRoute());
@@ -66,7 +73,7 @@ export function App() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
       {/* Header */}
-      <header className="flex items-center justify-between px-5 h-12 border-b border-border bg-[#0b1920]/80 backdrop-blur-md shrink-0">
+      <header className="flex items-center justify-between px-5 h-12 border-b border-border bg-card/80 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <div className="w-[7px] h-[7px] rounded-full bg-primary" />
@@ -90,7 +97,7 @@ export function App() {
                       ? "text-muted-foreground/30 cursor-not-allowed"
                       : activeTab === tab.id
                         ? "bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
+                        : "text-muted-foreground hover:text-foreground hover:bg-foreground/[0.04]"
                   }`}
                 >
                   {tab.label}
@@ -100,22 +107,27 @@ export function App() {
           </nav>
         </div>
 
-        {selectedProject && (
-          <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.04] border border-border/30">
-            <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
-              {t.graph.selectedLabel}
-            </span>
-            <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
-              {selectedProject}
-            </span>
-            <button
-              onClick={() => navigate("stats", null)}
-              className="text-foreground/20 hover:text-foreground/50 text-[12px] ml-1 transition-colors"
-            >
-              ×
-            </button>
-          </div>
-        )}
+        {/* Right cluster: the selected-project badge is conditional, the theme
+            switch is always present. */}
+        <div className="flex items-center gap-2">
+          {selectedProject && (
+            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-foreground/[0.04] border border-border/30">
+              <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
+                {t.graph.selectedLabel}
+              </span>
+              <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
+                {selectedProject}
+              </span>
+              <button
+                onClick={() => navigate("stats", null)}
+                className="text-foreground/20 hover:text-foreground/50 text-[12px] ml-1 transition-colors"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
 
       {/* Content */}
