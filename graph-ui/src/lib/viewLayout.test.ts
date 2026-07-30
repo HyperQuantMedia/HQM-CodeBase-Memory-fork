@@ -60,6 +60,45 @@ describe("deriveHierarchy", () => {
     expect(h.slotOf.has(20)).toBe(true);
   });
 
+  it("treats DEFINES as containment so symbols nest under their file", () => {
+    /* Real code graphs nest in two vocabularies: folders/files use CONTAINS_*,
+     * but a file holds its symbols with DEFINES / DEFINES_METHOD. Miss those and
+     * every function strands at the root, flattening the layouts and reducing
+     * the breadcrumb to one level. */
+    const ns = [n(1, "src"), n(2, "app.ts"), n(3, "boot"), n(4, "helper")];
+    const es: GraphEdge[] = [
+      { source: 1, target: 2, type: "CONTAINS_FILE" },
+      { source: 2, target: 3, type: "DEFINES" },
+      { source: 3, target: 4, type: "DEFINES_METHOD" },
+    ];
+    const h = deriveHierarchy(ns, es);
+    expect(h.slotOf.get(3)!.depth).toBe(3);
+    expect(h.slotOf.get(4)!.depth).toBe(4);
+    expect(computePathToRoot(4, h)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("picks the strongest containment when a node is claimed twice", () => {
+    /* Edge order must not decide the tree: CONTAINS_FILE outranks DEFINES
+     * whichever arrives first. */
+    const ns = [n(1, "src"), n(2, "other.ts"), n(3, "boot")];
+    const definesFirst: GraphEdge[] = [
+      { source: 2, target: 3, type: "DEFINES" },
+      { source: 1, target: 3, type: "CONTAINS_FILE" },
+    ];
+    const containsFirst: GraphEdge[] = [...definesFirst].reverse();
+    for (const es of [definesFirst, containsFirst]) {
+      const h = deriveHierarchy(ns, es);
+      expect(computePathToRoot(3, h)).toEqual([1, 3]);
+    }
+  });
+
+  it("ignores MEMBER_OF, which points the other way", () => {
+    /* Treating a member→container edge as containment would invert the branch. */
+    const ns = [n(1, "Klass"), n(2, "method")];
+    const h = deriveHierarchy(ns, [{ source: 2, target: 1, type: "MEMBER_OF" }]);
+    expect(h.fromEdges).toBe(false); /* no containment edges → path fallback */
+  });
+
   it("survives a containment cycle without hanging", () => {
     const cyc: GraphEdge[] = [
       { source: 1, target: 2, type: "CONTAINS_FOLDER" },

@@ -32,13 +32,24 @@ const TREE_LEVEL_W = 190;
 const TREE_LEAF_GAP = 18;
 const SPHERE_LAT_SPAN = 0.92;
 
-/* Containment edge types the indexer emits; any of them marks source→target
- * as parent→child. */
-const CONTAINMENT_TYPES = new Set([
-  "CONTAINS_FILE",
-  "CONTAINS_FOLDER",
-  "CONTAINS_PACKAGE",
-]);
+/* Edge types that mean "source structurally contains target", lowest number
+ * winning when a node is claimed twice. The indexer builds a code hierarchy in
+ * two vocabularies — folders and files nest with CONTAINS_*, but a file holds
+ * its symbols with DEFINES / DEFINES_METHOD — so both belong here. Omitting the
+ * DEFINES pair strands every function and method at the root, which flattens
+ * all three projections and truncates the breadcrumb to a single level.
+ *
+ * Priority (rather than first-edge-wins) keeps the tree identical regardless of
+ * the order edges arrive in. MEMBER_OF is deliberately absent: it points from
+ * member to container, and treating a reversed edge as containment would invert
+ * that branch of the tree. */
+const CONTAINMENT_PRIORITY: Record<string, number> = {
+  CONTAINS_PACKAGE: 0,
+  CONTAINS_FOLDER: 1,
+  CONTAINS_FILE: 2,
+  DEFINES: 3,
+  DEFINES_METHOD: 4,
+};
 
 export interface LayoutParams {
   /** Sphere radius multiplier (1 = auto-fit to depth). */
@@ -130,13 +141,19 @@ function buildFromEdges(
 ): Hierarchy | null {
   const present = new Set(nodes.map((n) => n.id));
   const parentOf = new Map<number, number>();
+  const parentRank = new Map<number, number>();
   let any = false;
   for (const e of edges) {
-    if (!CONTAINMENT_TYPES.has(e.type)) continue;
+    const rank = CONTAINMENT_PRIORITY[e.type];
+    if (rank === undefined) continue;
     if (!present.has(e.source) || !present.has(e.target)) continue;
     any = true;
-    /* First parent wins — a node claimed twice keeps a single tree position. */
-    if (!parentOf.has(e.target)) parentOf.set(e.target, e.source);
+    /* A node claimed twice keeps one position: the strongest containment. */
+    const held = parentRank.get(e.target);
+    if (held === undefined || rank < held) {
+      parentOf.set(e.target, e.source);
+      parentRank.set(e.target, rank);
+    }
   }
   if (!any) return null;
 
