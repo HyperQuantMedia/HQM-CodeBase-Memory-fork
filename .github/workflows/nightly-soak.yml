@@ -1,9 +1,13 @@
 # Weekly soak test: 4h sustained load + ASan leak detection
+#
+# HQM fork: the weekly cron is REMOVED. A 4-hour soak every Sunday is the
+# single largest consumer in a shared ~3000 min/month Actions budget, and this
+# fork validates locally (scripts/build.sh + the test suite) rather than on
+# hosted runners. The soak is still available on demand via workflow_dispatch,
+# so nothing is lost — it just never fires on its own.
 name: Nightly Soak
 
 on:
-  schedule:
-    - cron: '0 2 * * 0' # Every Sunday at 2am UTC
   workflow_dispatch:
     inputs:
       duration_minutes:

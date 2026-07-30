@@ -42,7 +42,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
+      # HQM fork: the gate below waits up to 45 minutes for a CodeQL run on this
+      # commit, but codeql.yml only triggers on push/PR to main. A release cut
+      # from any other ref (this fork releases from HQM-dev) therefore never
+      # produces one: the gate burned its full 45 minutes, failed with
+      # "CodeQL timeout", and left the release a draft with every asset already
+      # built. Skip the wait unless CodeQL could actually have run — the gate
+      # still enforces on main, where it is meaningful.
+      - name: Note skipped CodeQL gate
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "CodeQL gate skipped: codeql.yml only runs on main, and this ref"
+          echo "is ${{ github.ref }}. Nothing to wait for."
       - name: Wait for CodeQL on current commit (max 45 min)
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -67,7 +80,10 @@ jobs:
           done
           echo "BLOCKED: CodeQL timeout"; exit 1
 
+      # Alerts only exist where CodeQL ran, so this is gated with the wait above
+      # rather than spending 75s of sleep to read a guaranteed zero.
       - name: Check for open code scanning alerts
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
