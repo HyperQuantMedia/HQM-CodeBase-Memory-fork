@@ -1,7 +1,14 @@
 @import "tailwindcss";
 
-/* Cartograph celestial theme — void/space blues, north-star gold primary. */
-@theme inline {
+/* Cartograph celestial theme — void/space blues, north-star gold primary.
+ *
+ * NOT `@theme inline`: that substitutes each value directly into the generated
+ * utility (`.bg-background{background-color:#07071a}`), which makes runtime
+ * theme switching impossible — redefining --color-background later cannot reach
+ * a utility that no longer references it. Plain `@theme` emits
+ * `.bg-background{background-color:var(--color-background)}`, so the light
+ * overrides further down re-theme every utility with no component changes. */
+@theme {
   --color-background: #07071a;
   --color-foreground: #eef1ff;
   --color-card: #11122e;
@@ -37,60 +44,85 @@
  * `@theme inline` means every bg-background / text-foreground utility resolves
  * through var(--color-*), so redefining the vars re-themes the whole app with
  * no component changes. */
+/* Light theme — the celestial palette at daybreak: same role mapping, cool
+ * paper-white surfaces, and the north-star gold deepened to a bronze that
+ * actually passes contrast on white (the dark theme's #ffce6e reads as
+ * illegible pale yellow there).
+ *
+ * Borders carry real opacity here. Semi-transparent hairlines that work against
+ * near-black disappear entirely against near-white, which is what made the
+ * first attempt look unfinished — panel edges simply vanished.
+ *
+ * Declared twice on purpose: the media query (scoped with :where() so it can
+ * never outrank an explicit choice) follows the OS by default, and the
+ * [data-theme] attribute wins once the user picks. */
 @media (prefers-color-scheme: light) {
   :root:where(:not([data-theme="dark"])) {
     color-scheme: light;
-    --color-background: #f7f8fc;
-    --color-foreground: #14162b;
+    --color-background: #f4f5fa;
+    --color-foreground: #1a1c33;
     --color-card: #ffffff;
-    --color-card-foreground: #14162b;
+    --color-card-foreground: #1a1c33;
     --color-popover: #ffffff;
-    --color-popover-foreground: #14162b;
-    --color-primary: #a86a00;
-    --color-primary-foreground: #fffdf6;
-    --color-secondary: #eceef7;
-    --color-secondary-foreground: #3c4260;
-    --color-muted: #eceef7;
-    --color-muted-foreground: #5c6284;
-    --color-accent: #dfe3f2;
-    --color-accent-foreground: #14162b;
-    --color-destructive: #c53030;
-    --color-destructive-foreground: #fffdf6;
-    --color-border: #9aa2c81f;
-    --color-input: #ffffffcc;
-    --color-ring: #a86a00;
-    --color-sidebar: #f0f2f9;
-    --color-canvas: #eef1f8;
+    --color-popover-foreground: #1a1c33;
+    --color-primary: #8a5200;
+    --color-primary-foreground: #fffdf7;
+    --color-secondary: #e9ebf4;
+    --color-secondary-foreground: #363b57;
+    --color-muted: #e9ebf4;
+    --color-muted-foreground: #565b7a;
+    --color-accent: #dde1ef;
+    --color-accent-foreground: #1a1c33;
+    --color-destructive: #b42222;
+    --color-destructive-foreground: #fffdf7;
+    --color-border: #c3c8de;
+    --color-input: #ffffff;
+    --color-ring: #8a5200;
+    --color-sidebar: #eceef6;
+    --color-canvas: #e8ebf4;
   }
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --color-background: #f7f8fc;
-  --color-foreground: #14162b;
+  --color-background: #f4f5fa;
+  --color-foreground: #1a1c33;
   --color-card: #ffffff;
-  --color-card-foreground: #14162b;
+  --color-card-foreground: #1a1c33;
   --color-popover: #ffffff;
-  --color-popover-foreground: #14162b;
-  --color-primary: #a86a00;
-  --color-primary-foreground: #fffdf6;
-  --color-secondary: #eceef7;
-  --color-secondary-foreground: #3c4260;
-  --color-muted: #eceef7;
-  --color-muted-foreground: #5c6284;
-  --color-accent: #dfe3f2;
-  --color-accent-foreground: #14162b;
-  --color-destructive: #c53030;
-  --color-destructive-foreground: #fffdf6;
-  --color-border: #9aa2c81f;
-  --color-input: #ffffffcc;
-  --color-ring: #a86a00;
-  --color-sidebar: #f0f2f9;
-  --color-canvas: #eef1f8;
+  --color-popover-foreground: #1a1c33;
+  --color-primary: #8a5200;
+  --color-primary-foreground: #fffdf7;
+  --color-secondary: #e9ebf4;
+  --color-secondary-foreground: #363b57;
+  --color-muted: #e9ebf4;
+  --color-muted-foreground: #565b7a;
+  --color-accent: #dde1ef;
+  --color-accent-foreground: #1a1c33;
+  --color-destructive: #b42222;
+  --color-destructive-foreground: #fffdf7;
+  --color-border: #c3c8de;
+  --color-input: #ffffff;
+  --color-ring: #8a5200;
+  --color-sidebar: #eceef6;
+  --color-canvas: #e8ebf4;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+}
+
+/* The graph's own ink. Node and edge colours come from the data, but the label
+ * text and the loader are ours to theme. */
+.graph-loader-node,
+.graph-loader-edge {
+  --loader-ink: #22d3ee;
+}
+:root[data-theme="light"] .graph-loader-node,
+:root[data-theme="light"] .graph-loader-edge,
+:root:where(:not([data-theme="dark"])) .graph-loader-node,
+:root:where(:not([data-theme="dark"])) .graph-loader-edge {
+  --loader-ink: #0e7490;
 }
 
 html, body, #root {
@@ -108,14 +140,14 @@ html, body, #root {
 /* ── Graph loading constellation ─────────────────────────────── */
 
 .graph-loader-node {
-  fill: #22d3ee;
+  fill: var(--loader-ink, #22d3ee);
   animation: graph-loader-pulse 2.1s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center;
 }
 
 .graph-loader-edge {
-  stroke: #22d3ee;
+  stroke: var(--loader-ink, #22d3ee);
   stroke-opacity: 0.35;
   stroke-width: 1.2;
   stroke-dasharray: 90;

@@ -5,6 +5,7 @@ import { ControlTab } from "./components/ControlTab";
 import type { TabId } from "./lib/types";
 import { useUiMessages } from "./lib/i18n";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { BREADCRUMB_SLOT_ID } from "./components/Breadcrumb";
 import { initTheme } from "./lib/theme";
 
 const TAB_IDS: TabId[] = ["graph", "stats", "control"];
@@ -73,8 +74,11 @@ export function App() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
       {/* Header */}
-      <header className="flex items-center justify-between px-5 h-12 border-b border-border bg-card/80 backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-6">
+      {/* Three zones: brand + tabs, the selection breadcrumb, then project +
+          theme. min-h rather than a fixed height so a deep path can wrap onto a
+          second line without squeezing the clusters either side of it. */}
+      <header className="flex items-start justify-between gap-4 px-5 min-h-12 border-b border-border bg-card/80 backdrop-blur-md shrink-0">
+        <div className="flex items-center gap-6 h-12 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-[7px] h-[7px] rounded-full bg-primary" />
             <span className="text-[13px] font-semibold text-foreground/90 tracking-tight">
@@ -107,9 +111,21 @@ export function App() {
           </nav>
         </div>
 
+        {/* Centre zone: GraphTab portals its selection breadcrumb in here.
+            Flanked by rules so a wrapped path stays visually distinct from the
+            clusters either side. */}
+        <div className="flex-1 min-w-0 flex items-start justify-center gap-4 py-1.5">
+          <span className="w-px self-stretch bg-border/70 shrink-0" aria-hidden="true" />
+          <div
+            id={BREADCRUMB_SLOT_ID}
+            className="min-w-0 flex-1 flex items-start justify-center"
+          />
+          <span className="w-px self-stretch bg-border/70 shrink-0" aria-hidden="true" />
+        </div>
+
         {/* Right cluster: the selected-project badge is conditional, the theme
             switch is always present. */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 h-12 shrink-0">
           {selectedProject && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-foreground/[0.04] border border-border/30">
               <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
