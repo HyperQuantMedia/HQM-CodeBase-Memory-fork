@@ -5,10 +5,10 @@ export type UiLanguage = "en" | "zh";
 export const messages = {
   en: {
     tabs: {
-      graph: "Graph",
+      graph: "Relationship Graph",
       projects: "Projects",
-      sizes: "Sizes",
-      control: "Control",
+      sizes: "SizeMap Graph",
+      control: "Diagnostics",
     },
     common: {
       cancel: "Cancel",
@@ -79,10 +79,10 @@ export const messages = {
   },
   zh: {
     tabs: {
-      graph: "图谱",
+      graph: "关系图谱",
       projects: "项目",
-      sizes: "体积",
-      control: "控制",
+      sizes: "体积图谱",
+      control: "诊断",
     },
     common: {
       cancel: "取消",

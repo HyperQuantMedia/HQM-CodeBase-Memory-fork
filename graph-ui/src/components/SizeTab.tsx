@@ -12,28 +12,48 @@ import {
 import { fileKind, KIND_COLORS } from "../lib/fileKind";
 import { OpenButtons } from "./OpenButtons";
 
-/* Repo size map — the same nested corpus, measured in bytes instead of links.
+/* Size map — the same nested corpus, measured in bytes instead of links.
  *
- * Sizes come from file_hashes.size, which the incremental indexer already records
- * to decide what needs re-parsing, so this costs one query and no filesystem walk.
- * They are therefore as of the last index, which is the right answer for a view of
- * the indexed corpus and is stated in the footer rather than left to be guessed. */
+ * Sizes come from a live walk of the project root by default. Reading
+ * file_hashes.size instead was the first attempt and it was cheap for the wrong
+ * reason: that table holds only what the parser hashed, so on a 25 GB tree it saw
+ * 496 MB and missed 98% of the bytes. The indexed reading is still selectable,
+ * because "how big is the corpus I can search" is a real question — just not the
+ * one this view is for. Which source is showing is stated in the footer. */
 
 interface SizeTabProps {
   project: string | null;
+  /** Switch to the relationship graph for the same project. */
+  onOpenGraph?: () => void;
 }
 
 interface Payload {
   files: FileSize[];
   total_bytes: number;
   file_count: number;
+  truncated?: boolean;
+  source?: string;
 }
+
+/* Which files the map covers.
+ *
+ * "disk" walks the working tree; "indexed" reads what the parser hashed. The
+ * default is disk because the indexed set answers a different question and, on a
+ * real tree, a much smaller one: on a 25 GB checkout it covered 1,940 files and
+ * 496 MB while omitting 24.5 GB — the profiler captures, object files and static
+ * libraries that are where the weight actually is. */
+type SizeSource = "disk" | "indexed";
+
+const SOURCE_LABEL: Record<SizeSource, string> = {
+  disk: "All files on disk",
+  indexed: "Indexed files only",
+};
 
 /* Below this many pixels a tile gets no label — there is nowhere to put one. */
 const LABEL_MIN_W = 46;
 const LABEL_MIN_H = 18;
 
-export function SizeTab({ project }: SizeTabProps) {
+export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -42,6 +62,7 @@ export function SizeTab({ project }: SizeTabProps) {
   const [focus, setFocus] = useState("");
   const [hovered, setHovered] = useState<SizeNode | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  const [source, setSource] = useState<SizeSource>("disk");
   const frameRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,7 +74,9 @@ export function SizeTab({ project }: SizeTabProps) {
     setLoading(true);
     setError(null);
     setFocus("");
-    fetch(`/api/file-sizes?project=${encodeURIComponent(project)}`)
+    fetch(
+      `/api/file-sizes?project=${encodeURIComponent(project)}&source=${source}`,
+    )
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => {
         if (cancelled) return;
@@ -69,7 +92,7 @@ export function SizeTab({ project }: SizeTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [project]);
+  }, [project, source]);
 
   /* The frame is sized by flex, so the tile geometry has to follow its real box
    * rather than assume one. */
@@ -114,7 +137,9 @@ export function SizeTab({ project }: SizeTabProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-ink-dim text-sm">Reading indexed file sizes…</p>
+        <p className="text-ink-dim text-sm">
+          {source === "disk" ? "Walking the project tree…" : "Reading indexed file sizes…"}
+        </p>
       </div>
     );
   }
@@ -129,7 +154,9 @@ export function SizeTab({ project }: SizeTabProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <p className="text-ink-dim text-sm">
-          No file sizes recorded for this project — re-index to populate them.
+          {source === "indexed"
+            ? "No indexed file sizes for this project — re-index to populate them."
+            : "Nothing readable under this project's root path."}
         </p>
       </div>
     );
@@ -161,10 +188,22 @@ export function SizeTab({ project }: SizeTabProps) {
             );
           })}
         </nav>
-        <div className="ml-auto flex items-center gap-3 shrink-0">
+        <div className="ml-auto flex items-center gap-2 shrink-0">
           <span className="text-[11px] text-ink-soft tabular-nums">
             {formatBytes(node.bytes)} · {node.fileCount.toLocaleString()} files
           </span>
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value as SizeSource)}
+            aria-label="Which files to measure"
+            className="bg-input border border-border/60 rounded-md px-2 py-1 text-[11px] text-foreground outline-none focus:border-primary/50"
+          >
+            {(["disk", "indexed"] as SizeSource[]).map((v) => (
+              <option key={v} value={v}>
+                {SOURCE_LABEL[v]}
+              </option>
+            ))}
+          </select>
           {focus && (
             <Button
               variant="outline"
@@ -172,6 +211,16 @@ export function SizeTab({ project }: SizeTabProps) {
               onClick={() => setFocus(crumbs[crumbs.length - 2]?.path ?? "")}
             >
               Up
+            </Button>
+          )}
+          {onOpenGraph && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenGraph}
+              title="Same corpus, measured in relationships"
+            >
+              Graph
             </Button>
           )}
         </div>
@@ -240,7 +289,16 @@ export function SizeTab({ project }: SizeTabProps) {
             this size
           </span>
         )}
-        <span className="ml-auto">Sizes are as of the last index.</span>
+        {data.truncated && (
+          <span className="text-warning">
+            tree too large to walk in full — listing stopped early
+          </span>
+        )}
+        <span className="ml-auto">
+          {source === "disk"
+            ? "Live from disk, excluding .git."
+            : "Indexed files only, as of the last index."}
+        </span>
         {hovered && hovered.children.length === 0 && (
           <OpenButtons project={project} path={hovered.path} />
         )}

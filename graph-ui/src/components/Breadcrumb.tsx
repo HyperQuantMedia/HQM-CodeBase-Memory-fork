@@ -58,7 +58,7 @@ export function Breadcrumb({ crumbs, root, onSelect }: BreadcrumbProps) {
                   ? "text-foreground font-medium"
                   : "text-ink-soft hover:text-primary"
               }`}
-              title={`${crumb.label} — ${crumb.subtreeIds.length.toLocaleString()} node(s)`}
+              title={`${crumb.full} — ${crumb.subtreeIds.length.toLocaleString()} node(s)`}
             >
               {crumb.label}
             </button>

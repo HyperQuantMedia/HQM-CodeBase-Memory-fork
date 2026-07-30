@@ -859,11 +859,27 @@ export function computeReferenceForks(
  * slots with no node of their own (directories), since the breadcrumb is about
  * *location*, not about clickable graph nodes — but marks which are navigable. */
 export interface Crumb {
+  /** Display text: one path segment. */
   label: string;
+  /** The slot's full key, for the tooltip. */
+  full: string;
   /** Real node id when this level is a graph node, else null. */
   nodeId: number | null;
   /** All node ids under this level — what a click should select. */
   subtreeIds: number[];
+}
+
+/* Last segment of a slot key.
+ *
+ * A crumb names one level, but a slot key is whatever the indexer called the node
+ * — and some node kinds are named with their whole path. A Module node called
+ * "Engine/Code/Engine/Core/PromotedWarnings.hpp" therefore rendered the entire
+ * path as the final crumb, directly after the trail had already spelled it out one
+ * segment at a time. */
+function lastSegment(key: string): string {
+  const clean = key.replace(/\\/g, "/").replace(/\/+$/, "");
+  const cut = clean.lastIndexOf("/");
+  return cut >= 0 ? clean.slice(cut + 1) || clean : clean;
 }
 
 function collectIds(slot: Slot, into: number[]) {
@@ -877,13 +893,20 @@ export function computeCrumbs(nodeId: number, h: Hierarchy): Crumb[] {
   const chain: Slot[] = [];
   for (let s: Slot | null = slot; s && s.parent; s = s.parent) chain.push(s);
   chain.reverse();
-  return chain.map((s) => {
+  const crumbs: Crumb[] = chain.map((s) => {
     const ids: number[] = [];
     collectIds(s, ids);
     return {
-      label: s.key,
+      label: lastSegment(s.key),
+      full: s.key,
       nodeId: s.ids.length > 0 ? s.ids[0] : null,
       subtreeIds: ids,
     };
   });
+
+  /* Drop a level that repeats the one above it. Shortening path-named keys makes
+   * this visible: a File node and the Module named after the same path collapse to
+   * the same segment, and "… / PromotedWarnings.hpp / PromotedWarnings.hpp" is
+   * noise. The later entry wins, since it is the deeper, more specific node. */
+  return crumbs.filter((c, i) => i === 0 || c.label !== crumbs[i - 1].label);
 }

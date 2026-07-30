@@ -46,7 +46,14 @@ export function CollapsibleSection({
         </button>
         {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
       </div>
-      {open && children}
+      {/* The body is a flex child that must GROW, not merely exist.
+           Rendering `children` bare left it sized to its own content, so a section
+           told to take the whole column (`flex-1`, once its neighbour folded away)
+           did take it — and then left the height unused below the content. The
+           space was allocated and then wasted, which looks exactly like the space
+           never having been given. min-h-0 keeps the inner ScrollArea able to
+           shrink instead of pushing the section past the column. */}
+      {open && <div className="flex-1 min-h-0 flex flex-col">{children}</div>}
     </div>
   );
 }

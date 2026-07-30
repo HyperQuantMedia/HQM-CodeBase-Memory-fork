@@ -113,6 +113,40 @@ describe("collapsible sidebar panels", () => {
     expect(screen.getByText("Node types")).toBeInTheDocument();
   });
 
+  it("lets the open section fill the column when its neighbour folds away", async () => {
+    /* The section was handed the height and then wasted it: CollapsibleSection
+     * rendered its body as a bare flex child, so the content sized to itself and
+     * the rest of the box stayed empty — indistinguishable from never having been
+     * given the space. */
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+
+    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    const filters = screen
+      .getByRole("button", { name: /Filters/ })
+      .closest("[data-collapsible]")!;
+    expect(filters.className).toContain("flex-1");
+    /* The body wrapper has to grow too, not merely exist. */
+    const body = filters.querySelector(".flex-1.min-h-0");
+    expect(body).not.toBeNull();
+  });
+
+  it("keeps two collapsed strips together instead of straddling a void", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+
+    fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+    const folders = screen
+      .getByRole("button", { name: /Folders/ })
+      .closest("[data-collapsible]")!;
+    /* With nothing open there is no section to hand the gap to; pinning this one
+     * to the floor would turn the whole sidebar into empty space. */
+    expect(folders.className).not.toContain("mt-auto");
+  });
+
   it("folds Folders down to the bottom of the column, not up under Filters", async () => {
     mockFetch();
     render(<GraphTab project="demo" />);

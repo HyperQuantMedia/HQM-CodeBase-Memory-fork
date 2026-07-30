@@ -454,4 +454,46 @@ describe("computeCrumbs", () => {
     const h = deriveHierarchy(pathNodes, []);
     expect(computeCrumbs(10, h).map((c) => c.label)).toEqual(["docs", "guide", "a.md"]);
   });
+
+  it("shows one segment per level even when a node is named with its whole path", () => {
+    /* Some node kinds are named with their full path. Rendering the key verbatim
+     * put "Engine/Code/Engine/Core/PromotedWarnings.hpp" as the final crumb,
+     * immediately after the trail had already spelled that path out one segment at
+     * a time. The full key stays available for the tooltip. */
+    const ns = [
+      n(1, "src", "src"),
+      n(2, "core", "src/core"),
+      n(3, "src/core/thing.hpp", "src/core/thing.hpp"),
+    ];
+    const es: GraphEdge[] = [
+      { source: 1, target: 2, type: "CONTAINS_FOLDER" },
+      { source: 2, target: 3, type: "CONTAINS_FILE" },
+    ];
+    const crumbs = computeCrumbs(3, deriveHierarchy(ns, es));
+    expect(crumbs.map((c) => c.label)).toEqual(["src", "core", "thing.hpp"]);
+    expect(crumbs[2].full).toBe("src/core/thing.hpp");
+  });
+
+  it("drops a level that repeats the one above it", () => {
+    /* A File node and a Module node named after the same path shorten to the same
+     * segment; showing both is noise. */
+    const ns = [
+      n(1, "src", "src"),
+      n(2, "thing.hpp", "src/thing.hpp"),
+      n(3, "src/thing.hpp", "src/thing.hpp"),
+    ];
+    const es: GraphEdge[] = [
+      { source: 1, target: 2, type: "CONTAINS_FILE" },
+      { source: 2, target: 3, type: "DEFINES" },
+    ];
+    expect(computeCrumbs(3, deriveHierarchy(ns, es)).map((c) => c.label)).toEqual([
+      "src",
+      "thing.hpp",
+    ]);
+  });
+
+  it("handles a trailing separator and a bare name", () => {
+    const ns = [n(1, "solo")];
+    expect(computeCrumbs(1, deriveHierarchy(ns, [])).map((c) => c.label)).toEqual(["solo"]);
+  });
 });

@@ -9,7 +9,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { BREADCRUMB_SLOT_ID } from "./components/Breadcrumb";
 import { initTheme } from "./lib/theme";
 
-const TAB_IDS: TabId[] = ["graph", "stats", "sizes", "control"];
+const TAB_IDS: TabId[] = ["stats", "graph", "sizes", "control"];
 
 interface RouteState {
   tab: TabId;
@@ -67,10 +67,10 @@ export function App() {
   }, []);
 
   const tabs: { id: TabId; label: string }[] = [
-    { id: "graph", label: t.tabs.graph },
+    /* Pick a project, then look at it two ways, then inspect the server. The two
+       graphs sit together because they are the same corpus on different axes. */
     { id: "stats", label: t.tabs.projects },
-    /* Sizes sits next to Graph, not next to Control: it is the same corpus seen
-       on a different axis, so it belongs with the other views of the corpus. */
+    { id: "graph", label: t.tabs.graph },
     { id: "sizes", label: t.tabs.sizes },
     { id: "control", label: t.tabs.control },
   ];
@@ -153,9 +153,15 @@ export function App() {
       {/* Content */}
       <main className="flex-1 min-h-0">
         {activeTab === "graph" ? (
-          <GraphTab project={selectedProject} />
+          <GraphTab
+            project={selectedProject}
+            onOpenSizeMap={() => navigate("sizes", selectedProject)}
+          />
         ) : activeTab === "sizes" ? (
-          <SizeTab project={selectedProject} />
+          <SizeTab
+            project={selectedProject}
+            onOpenGraph={() => navigate("graph", selectedProject)}
+          />
         ) : activeTab === "control" ? (
           <ControlTab />
         ) : (

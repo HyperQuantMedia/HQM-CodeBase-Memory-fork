@@ -92,6 +92,8 @@ function saveNodeBudget(project: string, value: number) {
 
 interface GraphTabProps {
   project: string | null;
+  /** Switch to the size map for the same project. */
+  onOpenSizeMap?: () => void;
 }
 
 export function formatGraphLimitNotice(data: GraphData | null): string | null {
@@ -99,7 +101,7 @@ export function formatGraphLimitNotice(data: GraphData | null): string | null {
   return `Showing ${data.nodes.length.toLocaleString("en-US")} of ${data.total_nodes.toLocaleString("en-US")} nodes (${data.edges.length.toLocaleString("en-US")} edges). Raise the node budget or use filters.`;
 }
 
-export function GraphTab({ project }: GraphTabProps) {
+export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
   const { data, loading, error, progress, fetchOverview } = useGraphData();
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -622,9 +624,18 @@ export function GraphTab({ project }: GraphTabProps) {
           }
           /* `mt-auto` is what makes this fold *downward*: collapsed, the flex
               column's free space is pushed above the header, so the strip lands on
-              the bottom edge instead of riding up under Filters. */
+              the bottom edge instead of riding up under Filters.
+
+              Only while Filters is open, though. With both folded there is no open
+              section to hand the gap to, and pinning this one to the floor turns
+              the whole sidebar into a void between two strips — so they sit
+              together at the top instead. */
           className={
-            foldersOpen ? "flex-1 min-h-0" : "shrink-0 mt-auto border-t border-border/40"
+            foldersOpen
+              ? "flex-1 min-h-0"
+              : filtersOpen
+                ? "shrink-0 mt-auto border-t border-border/40"
+                : "shrink-0 border-t border-border/40"
           }
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
@@ -761,6 +772,17 @@ export function GraphTab({ project }: GraphTabProps) {
                 onViewChange={updateView}
                 labels={labelsInGraph}
               />
+              {onOpenSizeMap && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenSizeMap}
+                  aria-label="Open the size map"
+                  title="Same corpus, measured in bytes"
+                >
+                  Sizes
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"

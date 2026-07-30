@@ -51,7 +51,8 @@
 #include <windows.h>
 #include <shellapi.h> /* ShellExecuteW — open a path with its OS handler */
 #include <process.h>
-#include <psapi.h> /* GetProcessMemoryInfo */
+#include <psapi.h>    /* GetProcessMemoryInfo */
+#include <tlhelp32.h> /* CreateToolhelp32Snapshot - sibling-process enumeration */
 #else
 #include <fcntl.h> /* open(/dev/null) in the OS-handler launcher */
 #include <sys/stat.h>
@@ -360,19 +361,38 @@ static void handle_repo_info(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 
 /* ── File sizes (/api/file-sizes) ──────────────────────────────── */
 
-/* GET /api/file-sizes?project=NAME → { total_bytes, files: [ {path, bytes} ] }
+/* GET /api/file-sizes?project=NAME[&source=disk|indexed]
+ *     → { total_bytes, file_count, truncated, files: [ {path, bytes} ] }
  *
- * Serves the repo-size view. The byte size of every indexed file is already
- * recorded in file_hashes.size — the incremental indexer stores it alongside the
- * hash and mtime to decide what needs re-parsing — so this needs no new indexing
- * work and no filesystem walk, just a read of what is already there.
+ * Serves the size map.
  *
- * Note the sizes are as of the last index, not as of now. That is the right
- * answer for a view of the indexed corpus, and it is also the only cheap one:
- * stat()-ing every file on request would turn a view switch into thousands of
- * syscalls. */
+ * source=disk (the default) walks the project root and stats every file.
+ * source=indexed reads file_hashes.size instead, which the incremental indexer
+ * already records alongside each hash and mtime.
+ *
+ * Reading file_hashes was the original implementation and it was wrong for this
+ * view, by a lot. That table holds only the files the parser hashed — source
+ * files — so on a 25 GB working tree it accounted for 1,940 files and 496 MB while
+ * omitting 24,585 files and 24.5 GB: 98% of the bytes, including 12.6 GB of
+ * profiler captures, 3 GB of object files and 2.7 GB of static libraries. A size
+ * map that cannot see where the weight actually sits answers no question worth
+ * asking, and "the indexer didn't hash it" is not a reason for it to be invisible.
+ *
+ * So the walk is the default and the indexed reading is kept as a mode, because
+ * "how big is the corpus I can search" is a real second question — just not the
+ * one the view is for.
+ *
+ * .git is skipped: it is an implementation detail of the checkout, routinely
+ * larger than the tree it serves, and nobody browsing a size map is looking for
+ * it. Symlinked directories are not followed — a cycle would walk forever. */
 
-enum { FILE_SIZES_INITIAL_CAP = 1 << 16 };
+enum {
+    FILE_SIZES_INITIAL_CAP = 1 << 16,
+    /* Bounds the response and the walk. A tree this large is pathological for a
+     * treemap anyway — the reply says so rather than silently stopping. */
+    FILE_SIZES_MAX_ENTRIES = 400000,
+    FILE_SIZES_MAX_DEPTH = 64,
+};
 
 /* Append to a heap buffer, growing as needed. Returns 0 on success, -1 on OOM
  * (in which case *buf is freed and set to NULL). */
@@ -397,6 +417,97 @@ static int sizes_append(char **buf, size_t *len, size_t *cap, const char *text) 
     return 0;
 }
 
+/* Running state for one walk: the JSON array is emitted as we go, so nothing
+ * holds a list of 400k paths in memory. */
+typedef struct {
+    char **buf;
+    size_t *len;
+    size_t *cap;
+    long long total;
+    int count;
+    bool truncated;
+    bool oom;
+    size_t root_len; /* prefix to strip, so paths come out project-relative */
+} sizes_walk_t;
+
+static void sizes_emit(sizes_walk_t *w, const char *rel, long long bytes) {
+    size_t esc_cap = strlen(rel) * 6 + 8;
+    char *esc = malloc(esc_cap);
+    if (!esc) {
+        w->oom = true;
+        return;
+    }
+    cbm_json_escape(esc, (int)esc_cap, rel);
+
+    size_t row_cap = strlen(esc) + 64;
+    char *row = malloc(row_cap);
+    if (!row) {
+        free(esc);
+        w->oom = true;
+        return;
+    }
+    snprintf(row, row_cap, "%s{\"path\":\"%s\",\"bytes\":%lld}", w->count ? "," : "", esc,
+             bytes);
+    free(esc);
+    if (sizes_append(w->buf, w->len, w->cap, row) != 0) {
+        w->oom = true;
+    }
+    free(row);
+    w->total += bytes;
+    w->count++;
+}
+
+/* Depth-first walk of `dir`, emitting every regular file. `path` is a mutable
+ * buffer holding the absolute path of `dir`; recursion appends to it in place
+ * rather than allocating a path per level. */
+static void sizes_walk(sizes_walk_t *w, char *path, size_t path_len, size_t path_cap,
+                       int depth) {
+    if (w->oom || w->truncated || depth > FILE_SIZES_MAX_DEPTH) {
+        return;
+    }
+    cbm_dir_t *d = cbm_opendir(path);
+    if (!d) {
+        return; /* unreadable directory: skip it, do not fail the whole request */
+    }
+    cbm_dirent_t *ent;
+    while ((ent = cbm_readdir(d)) != NULL) {
+        if (w->oom || w->truncated) {
+            break;
+        }
+        const char *name = ent->name;
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+            continue;
+        }
+        /* .git is an implementation detail of the checkout and frequently bigger
+         * than the tree it serves. */
+        if (strcmp(name, ".git") == 0) {
+            continue;
+        }
+        size_t name_len = strlen(name);
+        if (path_len + 1 + name_len + 1 > path_cap) {
+            continue; /* path too long for the buffer — skip rather than truncate */
+        }
+        path[path_len] = '/';
+        memcpy(path + path_len + 1, name, name_len + 1);
+        size_t child_len = path_len + 1 + name_len;
+
+        if (ent->is_dir) {
+            sizes_walk(w, path, child_len, path_cap, depth + 1);
+        } else {
+            int64_t bytes = cbm_file_size(path);
+            if (bytes > 0) {
+                if (w->count >= FILE_SIZES_MAX_ENTRIES) {
+                    w->truncated = true;
+                    break;
+                }
+                sizes_emit(w, path + w->root_len, (long long)bytes);
+            }
+        }
+        path[path_len] = '\0';
+    }
+    cbm_closedir(d);
+}
+
 static void handle_file_sizes(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     char project[256] = {0};
     if (!cbm_http_query_param(req->query, "project", project, (int)sizeof(project)) ||
@@ -411,11 +522,84 @@ static void handle_file_sizes(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"project not found\"}");
         return;
     }
+    char source[32] = {0};
+    cbm_http_query_param(req->query, "source", source, (int)sizeof(source));
+    bool indexed_only = (strcmp(source, "indexed") == 0);
+
     cbm_store_t *store = cbm_store_open_path(db_path);
     if (!store) {
         cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"cannot open store\"}");
         return;
     }
+
+    /* ── Walk the working tree (default) ── */
+    if (!indexed_only) {
+        char root[1024] = {0};
+        cbm_project_t proj;
+        memset(&proj, 0, sizeof(proj));
+        if (cbm_store_get_project(store, project, &proj) == CBM_STORE_OK && proj.root_path) {
+            snprintf(root, sizeof(root), "%s", proj.root_path);
+        }
+        cbm_project_free_fields(&proj);
+        cbm_store_close(store);
+
+        if (root[0] == '\0') {
+            cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"project has no root path\"}");
+            return;
+        }
+
+        char *walk_buf = NULL;
+        size_t walk_len = 0, walk_cap = 0;
+        if (sizes_append(&walk_buf, &walk_len, &walk_cap, "{\"files\":[") != 0) {
+            cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+            return;
+        }
+
+        /* Strip the root plus its separator so paths come out project-relative. */
+        size_t root_len = strlen(root);
+        while (root_len > 0 && (root[root_len - 1] == '/' || root[root_len - 1] == '\\')) {
+            root[--root_len] = '\0';
+        }
+
+        enum { WALK_PATH_CAP = 4096 };
+        char *path = malloc(WALK_PATH_CAP);
+        if (!path) {
+            free(walk_buf);
+            cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+            return;
+        }
+        snprintf(path, WALK_PATH_CAP, "%s", root);
+
+        sizes_walk_t w;
+        memset(&w, 0, sizeof(w));
+        w.buf = &walk_buf;
+        w.len = &walk_len;
+        w.cap = &walk_cap;
+        w.root_len = root_len + 1; /* +1 for the separator the walker writes */
+        sizes_walk(&w, path, root_len, WALK_PATH_CAP, 0);
+        free(path);
+
+        if (!w.oom) {
+            char tail[192];
+            snprintf(tail, sizeof(tail),
+                     "],\"total_bytes\":%lld,\"file_count\":%d,\"truncated\":%s,"
+                     "\"source\":\"disk\"}",
+                     w.total, w.count, w.truncated ? "true" : "false");
+            if (sizes_append(&walk_buf, &walk_len, &walk_cap, tail) != 0) {
+                w.oom = true;
+            }
+        }
+        if (w.oom || !walk_buf) {
+            free(walk_buf);
+            cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+            return;
+        }
+        cbm_http_reply_buf(c, 200, g_cors_json, walk_buf, walk_len);
+        free(walk_buf);
+        return;
+    }
+
+    /* ── Or read what the indexer hashed ── */
     struct sqlite3 *db = cbm_store_get_db(store);
     if (!db) {
         cbm_store_close(store);
@@ -476,9 +660,11 @@ static void handle_file_sizes(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     cbm_store_close(store);
 
     if (!oom) {
-        char tail[128];
-        snprintf(tail, sizeof(tail), "],\"total_bytes\":%lld,\"file_count\":%d}", total,
-                 count);
+        char tail[192];
+        snprintf(tail, sizeof(tail),
+                 "],\"total_bytes\":%lld,\"file_count\":%d,\"truncated\":false,"
+                 "\"source\":\"indexed\"}",
+                 total, count);
         if (sizes_append(&buf, &len, &cap, tail) != 0) {
             oom = 1;
         }
@@ -634,6 +820,144 @@ static void handle_logs(cbm_http_conn_t *c, const cbm_http_req_t *req) {
 #endif
 #include <signal.h>
 
+#ifdef _WIN32
+
+/* -- Sibling-process enumeration (Windows) ---------------------- */
+
+/* The POSIX path shells out to "ps | grep". Windows has no ps, so the process
+ * list came back empty and the Control panel's CPU, RAM and process counts were
+ * all aggregates of nothing - the panel looked broken because two thirds of it
+ * structurally was.
+ *
+ * Toolhelp32 gives the sibling PIDs; the per-process figures need a handle each.
+ * PROCESS_QUERY_LIMITED_INFORMATION rather than PROCESS_QUERY_INFORMATION on
+ * purpose: it is the least privilege that still yields memory counters and
+ * timings, and it succeeds against processes this one may not fully inspect. A
+ * process that refuses a handle is still listed, with zeroed metrics, rather than
+ * dropped - a stray server you cannot measure is exactly the one worth seeing. */
+
+#define CBM_PROC_IMAGE_NAME "codebase-memory-mcp.exe"
+
+enum { WIN_PROC_MAX = 64 };
+
+typedef struct {
+    int pid;
+    double cpu_pct;
+    double rss_mb;
+    char elapsed[32];
+} win_proc_t;
+
+/* Format seconds the way ps -o etime does - [[dd-]hh:]mm:ss - so both platforms
+ * hand the UI the same shape of string. */
+static void win_format_elapsed(double seconds, char *out, size_t out_len) {
+    if (!(seconds > 0)) {
+        snprintf(out, out_len, "00:00");
+        return;
+    }
+    long long total = (long long)seconds;
+    long long days = total / 86400;
+    long long hours = (total % 86400) / 3600;
+    long long mins = (total % 3600) / 60;
+    long long secs = total % 60;
+    if (days > 0) {
+        snprintf(out, out_len, "%lld-%02lld:%02lld:%02lld", days, hours, mins, secs);
+    } else if (hours > 0) {
+        snprintf(out, out_len, "%02lld:%02lld:%02lld", hours, mins, secs);
+    } else {
+        snprintf(out, out_len, "%02lld:%02lld", mins, secs);
+    }
+}
+
+static double win_filetime_seconds(FILETIME ft) {
+    ULARGE_INTEGER u;
+    u.LowPart = ft.dwLowDateTime;
+    u.HighPart = ft.dwHighDateTime;
+    return (double)u.QuadPart / 1e7; /* 100ns ticks */
+}
+
+/* Fill out with every running codebase-memory-mcp process. Returns the count. */
+static int win_enumerate_cbm_processes(win_proc_t *out, int max_out) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    PROCESSENTRY32 entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.dwSize = sizeof(entry);
+
+    FILETIME now_ft;
+    GetSystemTimeAsFileTime(&now_ft);
+    double now_s = win_filetime_seconds(now_ft);
+
+    int count = 0;
+    if (Process32First(snap, &entry)) {
+        do {
+            if (count >= max_out) {
+                break;
+            }
+            if (_stricmp(entry.szExeFile, CBM_PROC_IMAGE_NAME) != 0) {
+                continue;
+            }
+            win_proc_t *proc = &out[count];
+            memset(proc, 0, sizeof(*proc));
+            proc->pid = (int)entry.th32ProcessID;
+            snprintf(proc->elapsed, sizeof(proc->elapsed), "00:00");
+
+            HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE,
+                                   entry.th32ProcessID);
+            if (h) {
+                PROCESS_MEMORY_COUNTERS pmc;
+                memset(&pmc, 0, sizeof(pmc));
+                if (GetProcessMemoryInfo(h, &pmc, sizeof(pmc))) {
+                    proc->rss_mb = (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+                }
+                FILETIME ft_create, ft_exit, ft_kernel, ft_user;
+                if (GetProcessTimes(h, &ft_create, &ft_exit, &ft_kernel, &ft_user)) {
+                    double elapsed = now_s - win_filetime_seconds(ft_create);
+                    if (elapsed < 0) {
+                        elapsed = 0;
+                    }
+                    win_format_elapsed(elapsed, proc->elapsed, sizeof(proc->elapsed));
+                    /* Lifetime-average CPU, matching what ps -o pcpu reports. An
+                     * instantaneous figure would need two samples and a wait,
+                     * which a request handler has no business doing. */
+                    double cpu_s =
+                        win_filetime_seconds(ft_user) + win_filetime_seconds(ft_kernel);
+                    if (elapsed > 0.5) {
+                        proc->cpu_pct = (cpu_s / elapsed) * 100.0;
+                    }
+                }
+                CloseHandle(h);
+            }
+            count++;
+        } while (Process32Next(snap, &entry));
+    }
+    CloseHandle(snap);
+    return count;
+}
+
+/* Whether a PID is one of the processes /api/processes would list.
+ *
+ * SECURITY: this is the authorization check for process-kill. The POSIX branch
+ * restricts kills to PIDs this server itself forked, and that guard was compiled
+ * out on Windows, leaving an unauthenticated loopback endpoint able to terminate
+ * any process on the machine by PID. Nothing exercised it while the process list
+ * was always empty, but making the list real puts a kill button beside every row,
+ * so the check is added here: the target must be a live codebase-memory-mcp,
+ * which is exactly the set the panel offers to kill. */
+static bool win_pid_is_cbm_process(int pid) {
+    win_proc_t procs[WIN_PROC_MAX];
+    int n = win_enumerate_cbm_processes(procs, WIN_PROC_MAX);
+    for (int i = 0; i < n; i++) {
+        if (procs[i].pid == pid) {
+            return true;
+        }
+    }
+    return false;
+}
+
+#endif /* _WIN32 */
+
 /* GET /api/processes — list codebase-memory-mcp processes via ps */
 static void handle_processes(cbm_http_conn_t *c) {
     char buf[8192];
@@ -658,8 +982,27 @@ static void handle_processes(cbm_http_conn_t *c) {
     }
     http_appendf(buf, sizeof(buf), &pos,
                  "{\"self_pid\":%d,\"self_rss_mb\":%.1f,"
-                 "\"self_user_cpu_s\":%.1f,\"self_sys_cpu_s\":%.1f,\"processes\":[]}",
+                 "\"self_user_cpu_s\":%.1f,\"self_sys_cpu_s\":%.1f,\"processes\":[",
                  (int)_getpid(), (double)rss_bytes / (1024.0 * 1024.0), user_s, sys_s);
+
+    win_proc_t procs[WIN_PROC_MAX];
+    int nprocs = win_enumerate_cbm_processes(procs, WIN_PROC_MAX);
+    for (int i = 0; i < nprocs; i++) {
+        if (i > 0) {
+            buf[pos++] = ',';
+        }
+        http_appendf(buf, sizeof(buf), &pos,
+                     "{\"pid\":%d,\"cpu\":%.1f,\"rss_mb\":%.1f,"
+                     "\"elapsed\":\"%s\",\"command\":\"%s\",\"is_self\":%s}",
+                     procs[i].pid, procs[i].cpu_pct, procs[i].rss_mb, procs[i].elapsed,
+                     CBM_PROC_IMAGE_NAME,
+                     procs[i].pid == (int)_getpid() ? "true" : "false");
+        if (pos >= (int)sizeof(buf)) {
+            pos = (int)sizeof(buf) - 1;
+            break;
+        }
+    }
+    http_appendf(buf, sizeof(buf), &pos, "]}");
 #else
     struct rusage ru;
     getrusage(RUSAGE_SELF, &ru);
@@ -740,6 +1083,17 @@ static void handle_process_kill(cbm_http_conn_t *c, const cbm_http_req_t *req) {
                         "{\"error\":\"cannot kill self (use the UI server's own shutdown)\"}");
         return;
     }
+
+#ifdef _WIN32
+    /* Windows has no fork, so child_pid is never populated and the POSIX guard
+     * below cannot apply. Restrict kills to the processes the panel actually
+     * lists instead - see win_pid_is_cbm_process. */
+    if (!win_pid_is_cbm_process(target_pid)) {
+        cbm_http_replyf(c, 403, g_cors_json,
+                        "{\"error\":\"can only kill codebase-memory-mcp processes\"}");
+        return;
+    }
+#endif
 
 #ifndef _WIN32
     /* Only allow killing PIDs that were spawned by this server (indexing jobs) */
