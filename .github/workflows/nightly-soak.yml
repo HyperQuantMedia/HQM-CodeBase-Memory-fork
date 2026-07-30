@@ -1,10 +1,15 @@
 # Weekly soak test: 4h sustained load + ASan leak detection
 #
-# HQM fork: the weekly cron is REMOVED. A 4-hour soak every Sunday is the
+# HQM fork: the weekly cron is REMOVED and the workflow is disabled in GitHub
+# (`gh workflow disable nightly-soak.yml`). A 4-hour soak every Sunday is the
 # single largest consumer in a shared ~3000 min/month Actions budget, and this
 # fork validates locally (scripts/build.sh + the test suite) rather than on
-# hosted runners. The soak is still available on demand via workflow_dispatch,
-# so nothing is lost — it just never fires on its own.
+# hosted runners. The soak is still available on demand once re-enabled, so
+# nothing is lost — it just cannot fire on its own, by two independent means.
+#
+# It delegates to soak.yml, not _soak.yml: _soak.yml's jobs hard-cap at
+# timeout-minutes 30 (45 with ASan), so the "4-hour" soak never ran past 30
+# minutes. soak.yml budgets 320 minutes, which is what the name here claims.
 name: Nightly Soak
 
 on:
@@ -20,7 +25,10 @@ permissions:
 
 jobs:
   soak:
-    uses: ./.github/workflows/_soak.yml
+    uses: ./.github/workflows/soak.yml
     with:
       duration_minutes: ${{ inputs.duration_minutes || 240 }}
-      run_asan: true
+      # soak.yml's inputs are duration_minutes + mode. It has no `run_asan`:
+      # ASan is decided inside its own job matrix, not by the caller. Passing
+      # run_asan here was an undeclared input and would have failed the call.
+      mode: query-leak

@@ -32,6 +32,23 @@ on:
         type: choice
         options: ['default', 'query-leak']
         default: 'query-leak'
+  # HQM fork: also callable, so nightly-soak.yml can delegate here instead of to
+  # _soak.yml. Adding this trigger does NOT create a firing path — a reusable
+  # workflow only ever runs when a caller runs, and the only caller
+  # (nightly-soak.yml) is dispatch-only with its cron removed and the workflow
+  # itself disabled in GitHub. `choice` is not a valid workflow_call input type,
+  # so `mode` is declared as a string here and its two legal values stay
+  # documented; the dispatch form above keeps the dropdown.
+  workflow_call:
+    inputs:
+      duration_minutes:
+        description: 'Soak duration in minutes (default: 240 = 4h)'
+        type: number
+        default: 240
+      mode:
+        description: "Soak mode: 'query-leak' (#581 detector, no reindex/mutate) or 'default'"
+        type: string
+        default: 'query-leak'
   # Iteration convenience: pushing a qa/soak-** branch starts a real run from
   # that branch's own copy of this file (no main merge needed). Non-gating.
   push:
