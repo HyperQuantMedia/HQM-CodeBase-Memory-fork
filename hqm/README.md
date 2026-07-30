@@ -24,9 +24,15 @@ A session opened in this repo alone should be able to reach competent continuati
 
 | Path | Holds |
 |---|---|
-| [`waypoint.md`](waypoint.md) | the resume baton: current edge, load-bearing judgment, what to open, open threads |
+| [`waypoint.md`](waypoint.md) | the resume baton: current edge, load-bearing judgment, what to open, where the work is tracked |
+| [`bugs.md`](bugs.md) | open defects — severity, status, repro; what is `awaiting(Rahul)` |
+| [`backlog.md`](backlog.md) | proposed work, blocked work, open questions — everything that is *not* a defect |
 | [`decisions/`](decisions/) | one settled ruling per file, dated; the *why*, the options weighed, the consequences |
 | [`notes/`](notes/) | session captures — the full spine behind a decision, with confidence labels |
+
+`bugs.md` and `backlog.md` are the two working surfaces; `decisions/` is what has stopped
+moving. A thing that is in neither register and has no decision record is **not tracked** —
+do not reconstruct it from the git log.
 
 Plain markdown in this repo's own conventions. No Astra tooling is installed here (no
 linter, no id minting, no index); the corpus machinery is HQM-Astra's and dragging it in
