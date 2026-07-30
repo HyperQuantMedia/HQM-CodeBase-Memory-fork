@@ -7,6 +7,7 @@ export const messages = {
     tabs: {
       graph: "Graph",
       projects: "Projects",
+      sizes: "Sizes",
       control: "Control",
     },
     common: {
@@ -80,6 +81,7 @@ export const messages = {
     tabs: {
       graph: "图谱",
       projects: "项目",
+      sizes: "体积",
       control: "控制",
     },
     common: {

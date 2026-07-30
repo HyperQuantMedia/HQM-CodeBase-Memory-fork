@@ -11,12 +11,21 @@ import type { GraphData } from "../lib/types";
 
 /* Capture what GraphScene is handed instead of rendering it. */
 const sceneProps: Record<string, unknown>[] = [];
+/* Every computeCameraTarget call, so a fly-to that never happened is
+ * distinguishable from one that did. The stub returns a marker derived from the
+ * ids rather than null — returning null made a previous version of the breadcrumb
+ * test unable to fail for the right reason. */
+const cameraCalls: { count: number; ids: number[] }[] = [];
 vi.mock("./GraphScene", () => ({
   GraphScene: (props: Record<string, unknown>) => {
     sceneProps.push(props);
     return null;
   },
-  computeCameraTarget: () => null,
+  computeCameraTarget: (nodes: { id: number }[], ids: Set<number>) => {
+    const list = [...ids].sort((a, b) => a - b);
+    cameraCalls.push({ count: nodes.length, ids: list });
+    return list.length ? { marker: list.join(",") } : null;
+  },
 }));
 
 /* A small containment-shaped graph: folder → file → two functions. */
@@ -63,6 +72,7 @@ function lastScene() {
 
 beforeEach(() => {
   sceneProps.length = 0;
+  cameraCalls.length = 0;
   localStorage.clear();
 });
 afterEach(() => {
@@ -118,6 +128,50 @@ describe("collapsible sidebar panels", () => {
     /* mt-auto is what pushes the flex column's free space above the strip, so a
      * collapsed Folders lands on the bottom edge instead of riding up. */
     expect(collapsed.className).toContain("mt-auto");
+  });
+});
+
+describe("unlinked-node filter", () => {
+  it("drops nodes whose only relationship was switched off", async () => {
+    /* The complaint this answers: turning a relationship off removed the links and
+     * left the nodes. On the sample corpus that stranded 2,803 External nodes, all
+     * of them reachable only by EXTERNAL_LINK, so the filter did exactly what it
+     * said and the graph did not get smaller. */
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+    const before = (lastScene().data as GraphData).nodes.length;
+    expect(before).toBe(4);
+
+    /* notes.pdf has no edges at all in the sample, so it is the unlinked one. */
+    fireEvent.click(screen.getByRole("button", { name: /Hide unlinked nodes/ }));
+    await waitFor(() => {
+      const nodes = (lastScene().data as GraphData).nodes;
+      expect(nodes.map((n) => n.id).sort()).toEqual([1, 2, 3]);
+    });
+  });
+
+  it("strands nothing when a relationship is switched off with the filter on", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+    fireEvent.click(screen.getByRole("button", { name: /Hide unlinked nodes/ }));
+
+    /* DEFINES is the only thing attaching "boot" to the file. */
+    fireEvent.click(screen.getByRole("button", { name: /defines/ }));
+    await waitFor(() => {
+      const nodes = (lastScene().data as GraphData).nodes;
+      expect(nodes.map((n) => n.id).sort()).toEqual([1, 2]);
+    });
+  });
+
+  it("shows how many nodes it would remove before it is switched on", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+    const toggle = screen.getByRole("button", { name: /Hide unlinked nodes/ });
+    /* One unlinked node in the sample — the count makes the trade visible. */
+    expect(toggle.textContent).toContain("1");
   });
 });
 
@@ -220,6 +274,23 @@ describe("breadcrumb", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText("Selection path")).not.toBeInTheDocument(),
     );
+  });
+
+  it("flies the camera to an ancestor's subtree when its segment is clicked", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+
+    const onNodeClick = lastScene().onNodeClick as (n: unknown) => void;
+    onNodeClick(SAMPLE.nodes[2]); /* "boot", nested under src/app.ts */
+    await screen.findByLabelText("Selection path");
+    cameraCalls.length = 0;
+
+    fireEvent.click(screen.getByRole("button", { name: /^src$/ }));
+    await waitFor(() => expect(cameraCalls.length).toBeGreaterThan(0));
+    /* src's subtree is the folder, the file and both symbols under it. */
+    expect(cameraCalls[cameraCalls.length - 1].ids).toEqual([1, 2, 3]);
+    expect(lastScene().cameraTarget).not.toBeNull();
   });
 });
 

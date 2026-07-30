@@ -358,6 +358,142 @@ static void handle_repo_info(cbm_http_conn_t *c, const cbm_http_req_t *req) {
     free(web_base);
 }
 
+/* ── File sizes (/api/file-sizes) ──────────────────────────────── */
+
+/* GET /api/file-sizes?project=NAME → { total_bytes, files: [ {path, bytes} ] }
+ *
+ * Serves the repo-size view. The byte size of every indexed file is already
+ * recorded in file_hashes.size — the incremental indexer stores it alongside the
+ * hash and mtime to decide what needs re-parsing — so this needs no new indexing
+ * work and no filesystem walk, just a read of what is already there.
+ *
+ * Note the sizes are as of the last index, not as of now. That is the right
+ * answer for a view of the indexed corpus, and it is also the only cheap one:
+ * stat()-ing every file on request would turn a view switch into thousands of
+ * syscalls. */
+
+enum { FILE_SIZES_INITIAL_CAP = 1 << 16 };
+
+/* Append to a heap buffer, growing as needed. Returns 0 on success, -1 on OOM
+ * (in which case *buf is freed and set to NULL). */
+static int sizes_append(char **buf, size_t *len, size_t *cap, const char *text) {
+    size_t add = strlen(text);
+    if (*len + add + 1 > *cap) {
+        size_t want = *cap ? *cap : FILE_SIZES_INITIAL_CAP;
+        while (want < *len + add + 1) {
+            want *= 2;
+        }
+        char *grown = realloc(*buf, want);
+        if (!grown) {
+            free(*buf);
+            *buf = NULL;
+            return -1;
+        }
+        *buf = grown;
+        *cap = want;
+    }
+    memcpy(*buf + *len, text, add + 1);
+    *len += add;
+    return 0;
+}
+
+static void handle_file_sizes(cbm_http_conn_t *c, const cbm_http_req_t *req) {
+    char project[256] = {0};
+    if (!cbm_http_query_param(req->query, "project", project, (int)sizeof(project)) ||
+        project[0] == '\0') {
+        cbm_http_replyf(c, 400, g_cors_json, "{\"error\":\"missing project parameter\"}");
+        return;
+    }
+
+    char db_path[1024];
+    db_path_for_project(project, db_path, sizeof(db_path));
+    if (db_path[0] == '\0' || !cbm_file_exists(db_path)) {
+        cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"project not found\"}");
+        return;
+    }
+    cbm_store_t *store = cbm_store_open_path(db_path);
+    if (!store) {
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"cannot open store\"}");
+        return;
+    }
+    struct sqlite3 *db = cbm_store_get_db(store);
+    if (!db) {
+        cbm_store_close(store);
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"cannot open store\"}");
+        return;
+    }
+
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "SELECT rel_path, size FROM file_hashes "
+                           "WHERE project = ?1 AND size > 0 ORDER BY size DESC",
+                           -1, &st, NULL) != SQLITE_OK) {
+        cbm_store_close(store);
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"query failed\"}");
+        return;
+    }
+    sqlite3_bind_text(st, 1, project, -1, SQLITE_STATIC);
+
+    char *buf = NULL;
+    size_t len = 0, cap = 0;
+    int oom = 0;
+    long long total = 0;
+    int count = 0;
+
+    if (sizes_append(&buf, &len, &cap, "{\"files\":[") != 0) {
+        oom = 1;
+    }
+
+    while (!oom && sqlite3_step(st) == SQLITE_ROW) {
+        const char *path = (const char *)sqlite3_column_text(st, 0);
+        long long bytes = sqlite3_column_int64(st, 1);
+        if (!path || !path[0]) {
+            continue;
+        }
+        total += bytes;
+
+        /* Paths come from the indexed tree and can contain anything a filename
+         * can — escape before it reaches the browser. */
+        size_t esc_cap = strlen(path) * 6 + 8;
+        char *esc = malloc(esc_cap);
+        if (!esc) {
+            oom = 1;
+            break;
+        }
+        cbm_json_escape(esc, (int)esc_cap, path);
+
+        char row[2600];
+        snprintf(row, sizeof(row), "%s{\"path\":\"%s\",\"bytes\":%lld}", count ? "," : "",
+                 esc, bytes);
+        free(esc);
+        if (sizes_append(&buf, &len, &cap, row) != 0) {
+            oom = 1;
+            break;
+        }
+        count++;
+    }
+    sqlite3_finalize(st);
+    cbm_store_close(store);
+
+    if (!oom) {
+        char tail[128];
+        snprintf(tail, sizeof(tail), "],\"total_bytes\":%lld,\"file_count\":%d}", total,
+                 count);
+        if (sizes_append(&buf, &len, &cap, tail) != 0) {
+            oom = 1;
+        }
+    }
+
+    if (oom || !buf) {
+        free(buf);
+        cbm_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+        return;
+    }
+
+    cbm_http_reply_buf(c, 200, g_cors_json, buf, len);
+    free(buf);
+}
+
 /* ── Log ring buffer ──────────────────────────────────────────── */
 
 #define LOG_RING_SIZE 500
@@ -1852,6 +1988,12 @@ static void dispatch_request(cbm_http_server_t *srv, cbm_http_conn_t *c,
     /* GET /api/repo-info → git remote / branch for GitHub deep-links */
     if (is_get && cbm_http_path_match(req->path, "/api/repo-info*")) {
         handle_repo_info(c, req);
+        return;
+    }
+
+    /* GET /api/file-sizes → indexed byte size per file, for the size map */
+    if (is_get && cbm_http_path_match(req->path, "/api/file-sizes*")) {
+        handle_file_sizes(c, req);
         return;
     }
 

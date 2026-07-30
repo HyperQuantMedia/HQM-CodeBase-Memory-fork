@@ -23,6 +23,11 @@ interface FilterPanelProps {
   onToggleShowOnlyDead: () => void;
   onToggleHideEntryPoints: () => void;
   onToggleHideTests: () => void;
+  /* Drop nodes that no enabled relationship touches. */
+  hideUnlinked: boolean;
+  /** How many nodes that would remove right now. */
+  unlinkedCount: number;
+  onToggleHideUnlinked: () => void;
 }
 
 /* Checkbox row matching the existing "Show labels" toggle style */
@@ -77,6 +82,9 @@ export function FilterPanel({
   onToggleShowOnlyDead,
   onToggleHideEntryPoints,
   onToggleHideTests,
+  hideUnlinked,
+  unlinkedCount,
+  onToggleHideUnlinked,
 }: FilterPanelProps) {
   /* Dead code folds independently of the filter chips — it is a different job
    * (a code-health lens, not a type filter). Open by default: it was always
@@ -218,7 +226,15 @@ export function FilterPanel({
       </div>
 
       {/* Display options — pinned footer */}
-      <div className="px-4 py-2.5 border-t border-border/20 shrink-0">
+      <div className="px-4 py-2.5 border-t border-border/20 shrink-0 space-y-2">
+        {/* Sits with the type filters rather than under Dead code: it is the
+            other half of switching a relationship off, not a code-health lens. */}
+        <CheckRow
+          checked={hideUnlinked}
+          onToggle={onToggleHideUnlinked}
+          label="Hide unlinked nodes"
+          count={hideUnlinked ? undefined : unlinkedCount}
+        />
         <button
           onClick={onToggleShowLabels}
           className={`inline-flex items-center gap-1.5 text-[11px] font-medium transition-all ${

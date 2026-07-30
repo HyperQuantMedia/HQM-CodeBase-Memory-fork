@@ -206,6 +206,12 @@ export function GraphTab({ project }: GraphTabProps) {
   const [showOnlyDead, setShowOnlyDead] = useState(false);
   const [hideEntryPoints, setHideEntryPoints] = useState(false);
   const [hideTests, setHideTests] = useState(false);
+  /* Turning a relationship off removes the links but leaves the nodes that only
+   * ever had that kind of link floating with nothing attached — 2,803 External
+   * nodes on the sample corpus, every one of them reachable solely by
+   * EXTERNAL_LINK. That is the node over-population: the filter did what it said
+   * and the graph did not get any smaller. */
+  const [hideUnlinked, setHideUnlinked] = useState(false);
 
   /* Initialize filters when data loads */
   useEffect(() => {
@@ -237,14 +243,27 @@ export function GraphTab({ project }: GraphTabProps) {
       deadCodeView ? { ...n, color: colorForStatus(n.status) } : n;
     const keep = (n: GraphNode) => enabledLabels.has(n.label) && statusOk(n);
 
-    const nodes = data.nodes.filter(keep).map(paint);
-    const nodeIds = new Set(nodes.map((n) => n.id));
+    let nodes = data.nodes.filter(keep).map(paint);
+    let nodeIds = new Set(nodes.map((n) => n.id));
     const edges = data.edges.filter(
       (e) =>
         enabledEdgeTypes.has(e.type) &&
         nodeIds.has(e.source) &&
         nodeIds.has(e.target),
     );
+
+    /* Drop nodes no surviving edge touches. Safe to do after the edge pass rather
+     * than iterating to a fixed point: a kept edge only ever references kept
+     * nodes, so removing the untouched ones cannot orphan an edge. */
+    if (hideUnlinked) {
+      const linked = new Set<number>();
+      for (const e of edges) {
+        linked.add(e.source);
+        linked.add(e.target);
+      }
+      nodes = nodes.filter((n) => linked.has(n.id));
+      nodeIds = new Set(nodes.map((n) => n.id));
+    }
 
     const linked_projects = data.linked_projects?.map((lp) => {
       const lpNodes = lp.nodes.filter(keep).map(paint);
@@ -269,7 +288,23 @@ export function GraphTab({ project }: GraphTabProps) {
     showOnlyDead,
     hideEntryPoints,
     hideTests,
+    hideUnlinked,
   ]);
+
+  /* How many nodes the unlinked filter would remove right now — shown on the
+   * checkbox, so the trade-off is visible before it is taken. */
+  const unlinkedCount = useMemo(() => {
+    if (!filteredData) return 0;
+    if (hideUnlinked) return 0;
+    const linked = new Set<number>();
+    for (const e of filteredData.edges) {
+      linked.add(e.source);
+      linked.add(e.target);
+    }
+    let count = 0;
+    for (const n of filteredData.nodes) if (!linked.has(n.id)) count++;
+    return count;
+  }, [filteredData, hideUnlinked]);
 
   /* Hierarchy of the filtered graph — one derivation feeding the alternate
    * layouts, the breadcrumb, and the path light. */
@@ -306,7 +341,7 @@ export function GraphTab({ project }: GraphTabProps) {
   useEffect(() => {
     if (!viewData || viewData.nodes.length === 0) return;
     const all = new Set(viewData.nodes.map((n) => n.id));
-    setCameraTarget(computeCameraTarget(viewData.nodes, all));
+    setCameraTarget(computeCameraTarget(viewData.nodes, all, view.fov));
     /* Deliberately keyed on the projection alone: reframing on every data change
      * would yank the camera back whenever a filter toggles. */
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
@@ -393,6 +428,15 @@ export function GraphTab({ project }: GraphTabProps) {
     };
   }, [project]);
 
+  /* Camera framing must read the coordinates that are actually on screen.
+   *
+   * Every fly-to used filteredData, i.e. the server's force layout — correct in
+   * the Web view, where viewData is the same array, and wrong in every other one,
+   * because the projections rewrite all three coordinates. Selecting anything
+   * while a projection was active therefore sent the camera to where that node
+   * would have been in a layout that was no longer being drawn. */
+  const framedNodes = viewData?.nodes ?? filteredData?.nodes ?? [];
+
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
       if (!filteredData || !path || nodeIds.size === 0) {
@@ -403,9 +447,9 @@ export function GraphTab({ project }: GraphTabProps) {
       }
       setSelectedPath(path);
       setHighlightedIds(nodeIds);
-      setCameraTarget(computeCameraTarget(filteredData.nodes, nodeIds));
+      setCameraTarget(computeCameraTarget(framedNodes, nodeIds, view.fov));
     },
-    [filteredData],
+    [filteredData, framedNodes, view.fov],
   );
 
   const handleNodeClick = useCallback(
@@ -421,9 +465,9 @@ export function GraphTab({ project }: GraphTabProps) {
       }
       setHighlightedIds(connectedIds);
       setSelectedPath(node.file_path ?? null);
-      setCameraTarget(computeCameraTarget(filteredData.nodes, connectedIds));
+      setCameraTarget(computeCameraTarget(framedNodes, connectedIds, view.fov));
     },
-    [filteredData],
+    [filteredData, framedNodes, view.fov],
   );
 
   const handleNavigateToNode = useCallback(
@@ -531,7 +575,17 @@ export function GraphTab({ project }: GraphTabProps) {
               return !v;
             })
           }
-          className={`border-b border-border/40 ${filtersOpen ? "max-h-[55%] shrink-0" : "shrink-0"}`}
+          /* Filters is capped at 55% so it cannot crowd out the folder tree — but
+              only while the tree is actually open. With Folders collapsed the cap
+              left a dead band of empty sidebar between the two headers, so the
+              open section takes the whole column instead. */
+          className={`border-b border-border/40 ${
+            !filtersOpen
+              ? "shrink-0"
+              : foldersOpen
+                ? "max-h-[55%] shrink-0"
+                : "flex-1 min-h-0"
+          }`}
         >
           <FilterPanel
             data={data}
@@ -551,6 +605,9 @@ export function GraphTab({ project }: GraphTabProps) {
             onToggleShowOnlyDead={() => setShowOnlyDead((v) => !v)}
             onToggleHideEntryPoints={() => setHideEntryPoints((v) => !v)}
             onToggleHideTests={() => setHideTests((v) => !v)}
+            hideUnlinked={hideUnlinked}
+            unlinkedCount={unlinkedCount}
+            onToggleHideUnlinked={() => setHideUnlinked((v) => !v)}
           />
         </CollapsibleSection>
 

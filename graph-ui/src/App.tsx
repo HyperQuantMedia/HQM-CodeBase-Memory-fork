@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
+import { SizeTab } from "./components/SizeTab";
 import type { TabId } from "./lib/types";
 import { useUiMessages } from "./lib/i18n";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { BREADCRUMB_SLOT_ID } from "./components/Breadcrumb";
 import { initTheme } from "./lib/theme";
 
-const TAB_IDS: TabId[] = ["graph", "stats", "control"];
+const TAB_IDS: TabId[] = ["graph", "stats", "sizes", "control"];
 
 interface RouteState {
   tab: TabId;
@@ -68,6 +69,9 @@ export function App() {
   const tabs: { id: TabId; label: string }[] = [
     { id: "graph", label: t.tabs.graph },
     { id: "stats", label: t.tabs.projects },
+    /* Sizes sits next to Graph, not next to Control: it is the same corpus seen
+       on a different axis, so it belongs with the other views of the corpus. */
+    { id: "sizes", label: t.tabs.sizes },
     { id: "control", label: t.tabs.control },
   ];
 
@@ -150,6 +154,8 @@ export function App() {
       <main className="flex-1 min-h-0">
         {activeTab === "graph" ? (
           <GraphTab project={selectedProject} />
+        ) : activeTab === "sizes" ? (
+          <SizeTab project={selectedProject} />
         ) : activeTab === "control" ? (
           <ControlTab />
         ) : (

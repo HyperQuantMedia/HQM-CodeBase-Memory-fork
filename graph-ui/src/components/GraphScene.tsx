@@ -353,9 +353,18 @@ export function GraphScene({
 
 /* ── Helper: compute camera target from node IDs ────────── */
 
+/* Frame a set of nodes.
+ *
+ * Distance comes from fitting the selection's bounding sphere to the vertical
+ * field of view, rather than from a multiple of its spread. The multiplier
+ * approach does not survive scale: ×3 is about right for a handful of nodes and
+ * badly over-frames a large one, so clicking a breadcrumb ancestor covering a few
+ * thousand nodes landed the camera at roughly the whole-graph view it was already
+ * at — the click looked like it had done nothing. */
 export function computeCameraTarget(
   nodes: GraphNode[],
   ids: Set<number>,
+  fovDegrees = 50,
 ): CameraTarget | null {
   if (ids.size === 0) return null;
 
@@ -388,13 +397,14 @@ export function computeCameraTarget(
     }
   }
 
-  /* Minimum distance scales with count: single node = 300, cluster = spread-based.
-   * The multiplier eases off for large selections: ×3 is right for a handful of
-   * nodes but pushes a whole-graph frame three times further out than it needs
-   * to be, which reads as "the view switched and everything vanished". */
-  const spreadDist = maxDist * (count > 1000 ? 1.5 : 3);
-  const minDist = count <= 5 ? 300 : 200;
-  const distance = Math.max(minDist, spreadDist);
+  /* Fit the bounding sphere to the frame. FIT_MARGIN leaves the selection short
+   * of the edges; MIN_RADIUS stops a single node (radius 0) from putting the
+   * camera inside it. */
+  const FIT_MARGIN = 1.25;
+  const MIN_RADIUS = 60;
+  const radius = Math.max(MIN_RADIUS, maxDist);
+  const halfFov = (Math.max(10, Math.min(120, fovDegrees)) * Math.PI) / 360;
+  const distance = (radius * FIT_MARGIN) / Math.sin(halfFov);
   const lookAt = new THREE.Vector3(cx, cy, cz);
   const position = new THREE.Vector3(
     cx + distance * 0.2,

@@ -139,3 +139,22 @@ export const FILE_KINDS: FileKind[] = [
   "config",
   "other",
 ];
+
+/* Kind → colour, for surfaces that show file kinds directly (the size map's
+ * tiles, `kind:` filter chips). Deliberately distinct from LABEL_COLORS in
+ * colors.ts: that maps *graph node labels* (Function, Class, Folder), which is a
+ * different vocabulary — a `.py` file and a Function node are not the same fact,
+ * and giving them one palette would imply they were. */
+export const KIND_COLORS: Record<FileKind, string> = {
+  code: "#3b82f6",
+  document: "#fbbf24",
+  spreadsheet: "#22c55e",
+  presentation: "#fb923c",
+  image: "#34d399",
+  video: "#a855f7",
+  audio: "#ec4899",
+  data: "#06b6d4",
+  archive: "#94a3b8",
+  config: "#eab308",
+  other: "#64748b",
+};
