@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { colorForLabel, STATUS_LEGEND } from "../lib/colors";
 import type { GraphData } from "../lib/types";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { SortControl } from "./SortControl";
+import { loadSort, saveSort, sortByOrder, type SortOrder } from "../lib/sortOrder";
 
 interface FilterPanelProps {
   data: GraphData;
@@ -92,6 +94,27 @@ export function FilterPanel({
    * foldable, not to hide it. */
   const [deadOpen, setDeadOpen] = useState(true);
 
+  /* One order per list. Node types and relationship types are read for different
+   * reasons in the same glance, so a shared control would always have one of them
+   * in the wrong order. Both persist. */
+  const [labelSort, setLabelSort] = useState<SortOrder>(() =>
+    loadSort("cbm-sort-node-types"),
+  );
+  const [edgeSort, setEdgeSort] = useState<SortOrder>(() =>
+    loadSort("cbm-sort-edge-types"),
+  );
+
+  const changeLabelSort = useCallback((next: SortOrder) => {
+    saveSort("cbm-sort-node-types", next);
+    setLabelSort(next);
+  }, []);
+  const changeEdgeSort = useCallback((next: SortOrder) => {
+    saveSort("cbm-sort-edge-types", next);
+    setEdgeSort(next);
+  }, []);
+
+  /* Counting and ordering are split so a sort click re-sorts a few dozen entries
+   * instead of re-walking every node and edge in the corpus. */
   const { labelCounts, edgeTypeCounts, statusCounts } = useMemo(() => {
     const lc = new Map<string, number>();
     for (const n of data.nodes) lc.set(n.label, (lc.get(n.label) ?? 0) + 1);
@@ -101,11 +124,20 @@ export function FilterPanel({
     for (const n of data.nodes)
       if (n.status) sc.set(n.status, (sc.get(n.status) ?? 0) + 1);
     return {
-      labelCounts: [...lc.entries()].sort((a, b) => b[1] - a[1]),
-      edgeTypeCounts: [...ec.entries()].sort((a, b) => b[1] - a[1]),
+      labelCounts: [...lc.entries()],
+      edgeTypeCounts: [...ec.entries()],
       statusCounts: sc,
     };
   }, [data]);
+
+  const sortedLabels = useMemo(
+    () => sortByOrder(labelCounts, (e) => e[0], (e) => e[1], labelSort),
+    [labelCounts, labelSort],
+  );
+  const sortedEdgeTypes = useMemo(
+    () => sortByOrder(edgeTypeCounts, (e) => e[0], (e) => e[1], edgeSort),
+    [edgeTypeCounts, edgeSort],
+  );
 
   const deadCount = statusCounts.get("dead") ?? 0;
 
@@ -125,9 +157,16 @@ export function FilterPanel({
           {/* Node types */}
           {labelCounts.length > 0 && (
             <div>
-              <p className="text-[10px] font-medium text-ink-soft mb-1.5 uppercase tracking-wider">Node types</p>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <p className="text-[10px] font-medium text-ink-soft uppercase tracking-wider">Node types</p>
+                <SortControl
+                  listName="node types"
+                  order={labelSort}
+                  onChange={changeLabelSort}
+                />
+              </div>
               <div className="flex flex-wrap gap-1">
-                {labelCounts.map(([label, count]) => {
+                {sortedLabels.map(([label, count]) => {
                   const on = enabledLabels.has(label);
                   const c = colorForLabel(label);
                   return (
@@ -151,9 +190,16 @@ export function FilterPanel({
           {/* Relationships */}
           {edgeTypeCounts.length > 0 && (
             <div>
-              <p className="text-[10px] font-medium text-ink-soft mb-1.5 uppercase tracking-wider">Relationships</p>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <p className="text-[10px] font-medium text-ink-soft uppercase tracking-wider">Relationships</p>
+                <SortControl
+                  listName="relationships"
+                  order={edgeSort}
+                  onChange={changeEdgeSort}
+                />
+              </div>
               <div className="flex flex-wrap gap-1">
-                {edgeTypeCounts.map(([type, count]) => {
+                {sortedEdgeTypes.map(([type, count]) => {
                   const on = enabledEdgeTypes.has(type);
                   return (
                     <button

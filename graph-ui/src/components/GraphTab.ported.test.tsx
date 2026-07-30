@@ -132,7 +132,7 @@ describe("collapsible sidebar panels", () => {
     expect(body).not.toBeNull();
   });
 
-  it("keeps two collapsed strips together instead of straddling a void", async () => {
+  it("keeps collapsed Folders on the floor even with Filters collapsed too", async () => {
     mockFetch();
     render(<GraphTab project="demo" />);
     await screen.findByText("Filters");
@@ -142,9 +142,12 @@ describe("collapsible sidebar panels", () => {
     const folders = screen
       .getByRole("button", { name: /Folders/ })
       .closest("[data-collapsible]")!;
-    /* With nothing open there is no section to hand the gap to; pinning this one
-     * to the floor would turn the whole sidebar into empty space. */
-    expect(folders.className).not.toContain("mt-auto");
+    /* Owner ruling: the collapsed strip is anchored to the bottom edge whatever
+     * its neighbour does. An earlier pass released it here on the grounds that
+     * two strips straddling an empty column looked worse — a metric of my own
+     * choosing, and overturned. A control that moves when an unrelated panel
+     * folds is a control you have to hunt for. */
+    expect(folders.className).toContain("mt-auto");
   });
 
   it("folds Folders down to the bottom of the column, not up under Filters", async () => {

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { Activity, Boxes, LayoutDashboard } from "lucide-react";
+import { GraphTabIcon } from "./components/TabIcons";
 import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
@@ -10,6 +12,10 @@ import { BREADCRUMB_SLOT_ID } from "./components/Breadcrumb";
 import { initTheme } from "./lib/theme";
 
 const TAB_IDS: TabId[] = ["stats", "graph", "sizes", "control"];
+
+/* Tabs that render one project's corpus, so they are unreachable until one is
+ * picked. Diagnostics is server-wide and Projects is the picker itself. */
+const PROJECT_TABS: TabId[] = ["graph", "sizes"];
 
 interface RouteState {
   tab: TabId;
@@ -66,13 +72,42 @@ export function App() {
     setRoute({ tab, project });
   }, []);
 
-  const tabs: { id: TabId; label: string }[] = [
+  /* Icons, not words. The four labels ran to "Relationship Graph" and "SizeMap
+     Graph" — two long phrases sharing a word, which reads as text to parse
+     rather than a place to recognise, and ate the header width the breadcrumb
+     needs. Same call already made for the projection toolbar (ViewModeIcons).
+     Each glyph says what the tab shows: stacked boxes for the project list, a
+     forking hub for relationships, unequal rectangles for the treemap, a pulse
+     line for server diagnostics. The label survives as the tooltip and the
+     accessible name, so nothing is lost to a screen reader or a hover.
+
+     The graph glyph is hand-drawn (components/TabIcons.tsx) because two stock
+     icons failed on it in turn: Share2 is the platform share affordance, and
+     Waypoints draws a single routed path with no branching in it at all. A
+     relationship graph forks; see that file for the drawing. */
+  const tabs: {
+    id: TabId;
+    label: string;
+    Icon: (props: { className?: string }) => ReactElement;
+  }[] = [
     /* Pick a project, then look at it two ways, then inspect the server. The two
        graphs sit together because they are the same corpus on different axes. */
-    { id: "stats", label: t.tabs.projects },
-    { id: "graph", label: t.tabs.graph },
-    { id: "sizes", label: t.tabs.sizes },
-    { id: "control", label: t.tabs.control },
+    {
+      id: "stats",
+      label: t.tabs.projects,
+      Icon: () => <Boxes size={15} strokeWidth={1.6} aria-hidden="true" />,
+    },
+    { id: "graph", label: t.tabs.graph, Icon: GraphTabIcon },
+    {
+      id: "sizes",
+      label: t.tabs.sizes,
+      Icon: () => <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />,
+    },
+    {
+      id: "control",
+      label: t.tabs.control,
+      Icon: () => <Activity size={15} strokeWidth={1.6} aria-hidden="true" />,
+    },
   ];
 
   return (
@@ -93,14 +128,20 @@ export function App() {
           {/* Tabs inline in header */}
           <nav className="flex items-center gap-0.5">
             {tabs.map((tab) => {
-              const disabled = tab.id === "graph" && !selectedProject;
+              /* Both project views need a project. The size map was left out of
+                 this check and stayed live with nothing selected, so clicking it
+                 landed on its own "select a project" placeholder instead of
+                 telling you up front — the greyed tab is the answer, the empty
+                 pane is a detour. */
+              const disabled = PROJECT_TABS.includes(tab.id) && !selectedProject;
               return (
                 <button
                   key={tab.id}
                   onClick={() => navigate(tab.id, tab.id === "stats" ? null : selectedProject)}
                   disabled={disabled}
-                  title={disabled ? "Select a project first" : undefined}
-                  className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all ${
+                  aria-label={tab.label}
+                  title={disabled ? `${tab.label} — select a project first` : tab.label}
+                  className={`flex items-center justify-center w-8 h-7 rounded-md transition-all ${
                     disabled
                       ? "text-muted-foreground/30 cursor-not-allowed"
                       : activeTab === tab.id
@@ -108,7 +149,7 @@ export function App() {
                         : "text-muted-foreground hover:text-foreground hover:bg-foreground/[0.04]"
                   }`}
                 >
-                  {tab.label}
+                  <tab.Icon />
                 </button>
               );
             })}

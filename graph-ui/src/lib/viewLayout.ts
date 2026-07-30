@@ -318,6 +318,45 @@ const SPHERE_SPACING_K = 3.81;
 /* Radius reserved for a single node, in units of the target spacing. */
 const LEAF_RADIUS_K = 0.78;
 
+/* Target spacing for a radius-driven layout, in median radii. The relationship
+ * graph gets its target from the source layout's own measured spacing, which a
+ * size graph has no equivalent of — every node starts at the origin — so the
+ * radii have to set it. 2.6 puts a gap of roughly one median diameter between two
+ * typical neighbours: tight enough that the structure reads as clusters, loose
+ * enough that a heavy file and its neighbour are two spheres and not a peanut. */
+const SIZE_SPACING_K = 2.6;
+
+/* Which sampled node the radius fit satisfies — the density dial for the size
+ * views, and it is a trade, not an optimum.
+ *
+ * "No spheres may overlap" was the first target and it is wrong. Measured over the
+ * same 47k-node corpus, the *approved* relationship graph — the server force layout
+ * the owner has looked at and signed off — runs at 57% of sampled nodes
+ * intersecting a neighbour, median clearance −0.32× the median radius. Spheres
+ * interpenetrate constantly there and it reads fine, because the corona rendering
+ * turns a dense cloud into a legible one. Chasing zero overlap put the size views
+ * at 0.5–1% overlap and +4 to +11× median radius of clear space: a near-empty
+ * starfield, sparser than anything in the product.
+ *
+ * A size map does want to be less dense than a relationship graph, because a
+ * half-buried sphere misstates its own file's bytes — which is the one thing this
+ * view exists to say. So it sits between. Measured (astra 864 files, p4 26k files):
+ *
+ *   quantile   overlapping   median clearance
+ *   0.60         ~30%          ~1.0× median r
+ *   0.70         ~21%          ~1.7× median r
+ *   0.80         ~10–16%       ~2–3× median r
+ *   0.98         ~1%           ~4–11× median r   (the empty one)
+ *
+ * 0.70 is the pick: most spheres distinct, scene still populated. It is a judgment
+ * on a trade curve, not a derived constant — if the owner's eye says otherwise, the
+ * dial is here and the numbers above say what each notch costs. */
+const RADII_FIT_QUANTILE = 0.7;
+
+/* Clear space demanded between two surfaces, in median radii. Touching spheres
+ * read as one object, so a gap is not cosmetic. */
+const RADII_FIT_GAP_K = 0.5;
+
 /* Fraction of a parent's volume its children's balls may claim.
  *
  * Sphere packing tops out near 0.64 even when the spheres are free to arrange
@@ -414,11 +453,43 @@ function fibSphere(i: number, n: number): Vec3 {
   return [r * Math.cos(a), y, r * Math.sin(a)];
 }
 
-/* i-th of n points spread evenly over a unit disc (sunflower). */
-function sunflower(i: number, n: number, phase: number): [number, number] {
-  const r = Math.sqrt((i + 0.5) / Math.max(1, n));
+/* i-th of n points spread evenly over a unit disc (sunflower).
+ *
+ * `radialIdx` defaults to `i`; splitting the two lets a caller keep the golden-
+ * angle spread while choosing which ring each child lands on — see `radialOrder`. */
+function sunflower(
+  i: number,
+  n: number,
+  phase: number,
+  radialIdx = i,
+): [number, number] {
+  const r = Math.sqrt((radialIdx + 0.5) / Math.max(1, n));
   const a = i * PHI_ANGLE + phase;
   return [r * Math.cos(a), r * Math.sin(a)];
+}
+
+/* Which ring each child occupies, smallest ball innermost.
+ *
+ * Both nested placements put child i at a radius scaled by (room − outer_i): the
+ * bigger a child's own ball, the closer to the parent's centre it is placed, which
+ * for equal-sized spheres is a harmless detail and for a size map is the bug. The
+ * heaviest file in a folder is exactly the one that needs the most elbow room, and
+ * it was being dropped into the most crowded part of the cluster — then a global
+ * rescale paid for the resulting overlap by inflating the entire scene, which
+ * traded 55% intersecting spheres for a near-empty one.
+ *
+ * Ordering the radial term by ascending ball size instead puts the small children
+ * in the tight interior and the heavy ones out where the shell is roomy. The
+ * angular term still keys on the original index, so the golden-angle spread — and
+ * with it the stability of the layout under filtering — is untouched.
+ *
+ * Returns radial rank per child index. */
+function radialOrder(children: Slot[], outer: Map<Slot, number>): number[] {
+  const idx = children.map((_, i) => i);
+  idx.sort((a, b) => (outer.get(children[a]) ?? 0) - (outer.get(children[b]) ?? 0));
+  const rank = new Array<number>(children.length);
+  for (let r = 0; r < idx.length; r++) rank[idx[r]] = r;
+  return rank;
 }
 
 /* i-th of n directions spread evenly over a spherical cap of half-angle θ
@@ -508,7 +579,16 @@ export function sampleSpacing(nodes: GraphNode[], samples = 120): number {
  *   own     — a slot can hold several graph nodes (many symbols in one file);
  *             they are fanned out later and need their own room.
  */
-function sizeClusters(h: Hierarchy, target: number): Map<Slot, number> {
+function sizeClusters(
+  h: Hierarchy,
+  target: number,
+  /* Room a slot's own nodes need, when that varies per node — the size map, where
+   * a vendored 400 MB archive draws twenty times the radius of a header file.
+   * Absent, every leaf reserves the same target-derived room, which is right for
+   * the relationship graph (all spheres one size) and catastrophic for the size
+   * map (the big ones swallow their neighbours). */
+  ownRadius?: (slot: Slot) => number,
+): Map<Slot, number> {
   const outer = new Map<Slot, number>();
   /* Explicit stack: recursion would risk the call stack on a deep corpus, and
    * this visits every slot in the graph. */
@@ -528,9 +608,28 @@ function sizeClusters(h: Hierarchy, target: number): Map<Slot, number> {
       childVolume += co * co * co;
     }
     const packed = childVolume > 0 ? Math.cbrt(childVolume / PACKING) : 0;
-    const leaf = target * LEAF_RADIUS_K;
+    /* With a per-node radius the node's own geometry sets its floor, plus a gap so
+     * two touching spheres still read as two. Without one, the uniform leaf. */
+    const mine = ownRadius?.(slot);
+    const leaf =
+      mine !== undefined ? mine + target * LEAF_RADIUS_K * 0.5 : target * LEAF_RADIUS_K;
+    /* Surface term: the immediate children have to land a step apart on their
+     * shell, and R ≥ step·√n/3.81 for a Fibonacci lattice of n points.
+     *
+     * `step` stays derived from the target spacing even in the size-aware case, and
+     * that is deliberate. Deriving it from the real radii (2× the biggest child, the
+     * pair that actually has to clear) is geometrically the correct local rule and
+     * it detonates: every level's shell then grows by √n over the level below,
+     * compounding with *breadth*, and a 26k-file tree measured 27 million units
+     * across — the same blow-up the packing rule above was written to avoid. The
+     * volume budget is the only term that can be recursive. Local separation among
+     * varied radii is bought instead by bounding the radius range at the source
+     * (lib/sizeGraph.ts) and by the closing fit. */
     const surface = n > 1 ? (target * Math.sqrt(n)) / SPHERE_SPACING_K : 0;
-    const own = target * 0.55 * Math.sqrt(Math.max(1, slot.ids.length));
+    const own =
+      mine !== undefined
+        ? mine * Math.sqrt(Math.max(1, slot.ids.length))
+        : target * 0.55 * Math.sqrt(Math.max(1, slot.ids.length));
     outer.set(slot, Math.max(packed, leaf, surface, own));
   }
   return outer;
@@ -542,8 +641,12 @@ function sizeClusters(h: Hierarchy, target: number): Map<Slot, number> {
  * ball in turn — the sub-clustering the flat single-shell version could not
  * express. A package reads as a globe, its folders as globes within it, its files
  * as globes within those. */
-function layoutSphere(h: Hierarchy, target: number): Map<Slot, Vec3> {
-  const outer = sizeClusters(h, target);
+function layoutSphere(
+  h: Hierarchy,
+  target: number,
+  ownRadius?: (slot: Slot) => number,
+): Map<Slot, Vec3> {
+  const outer = sizeClusters(h, target, ownRadius);
   const pos = new Map<Slot, Vec3>();
   pos.set(h.root, [0, 0, 0]);
   const stack: Slot[] = [h.root];
@@ -552,10 +655,13 @@ function layoutSphere(h: Hierarchy, target: number): Map<Slot, Vec3> {
     const at = pos.get(slot)!;
     const room = outer.get(slot)!;
     const n = slot.children.length;
+    /* Radius-driven layouts sort the rings by ball size; uniform ones have nothing
+     * to sort and keep the original order. */
+    const rank = ownRadius ? radialOrder(slot.children, outer) : null;
     for (let i = 0; i < n; i++) {
       const child = slot.children[i];
       const d = fibSphere(i, n);
-      const r = Math.max(0, room - outer.get(child)!) * annulusFrac(i, n);
+      const r = Math.max(0, room - outer.get(child)!) * annulusFrac(rank ? rank[i] : i, n);
       pos.set(child, [at[0] + d[0] * r, at[1] + d[1] * r, at[2] + d[2] * r]);
       stack.push(child);
     }
@@ -569,8 +675,13 @@ function layoutSphere(h: Hierarchy, target: number): Map<Slot, Vec3> {
  * disc below that: a cone whose surface is made of smaller cones. The drop per
  * level is a fraction of that level's own radius, so the silhouette stays
  * self-similar all the way down instead of flattening where the corpus is wide. */
-function layoutCone(h: Hierarchy, target: number, steep: number): Map<Slot, Vec3> {
-  const outer = sizeClusters(h, target);
+function layoutCone(
+  h: Hierarchy,
+  target: number,
+  steep: number,
+  ownRadius?: (slot: Slot) => number,
+): Map<Slot, Vec3> {
+  const outer = sizeClusters(h, target, ownRadius);
   const pos = new Map<Slot, Vec3>();
   pos.set(h.root, [0, 0, 0]);
   const stack: Slot[] = [h.root];
@@ -581,9 +692,10 @@ function layoutCone(h: Hierarchy, target: number, steep: number): Map<Slot, Vec3
     const n = slot.children.length;
     const drop = Math.max(target, room * steep);
     const phase = hash(slot.key) * Math.PI * 2;
+    const rank = ownRadius ? radialOrder(slot.children, outer) : null;
     for (let i = 0; i < n; i++) {
       const child = slot.children[i];
-      const [dx, dz] = sunflower(i, n, phase);
+      const [dx, dz] = sunflower(i, n, phase, rank ? rank[i] : i);
       const r = Math.max(0, room - outer.get(child)!);
       pos.set(child, [at[0] + dx * r, at[1] - drop, at[2] + dz * r]);
       stack.push(child);
@@ -617,11 +729,12 @@ function layoutOrganic(
   target: number,
   branchSpread: number,
   leafShape: LeafShape,
+  ownRadius?: (slot: Slot) => number,
 ): Map<Slot, Vec3> {
   /* Half-angle of the fan: narrow enough to read as a branch, wide enough that a
    * 500-child folder is not a needle. */
   const theta = 0.3 + branchSpread * 0.95;
-  const outer = sizeClusters(h, target);
+  const outer = sizeClusters(h, target, ownRadius);
 
   const pos = new Map<Slot, Vec3>();
   const dir = new Map<Slot, Vec3>();
@@ -689,7 +802,14 @@ function layoutOrganic(
       /* Limb length: the parent's own room, leaning longer for the heavier
        * subtrees so the trunk structure is legible before any label is. */
       const weight = slot.leaves > 0 ? child.leaves / slot.leaves : 0;
-      const r = Math.max(target, room - outer.get(child)!) *
+      const childOuter = outer.get(child)!;
+      /* Limb length. For uniform spheres, `room − childOuter` keeps the subtree
+       * inside its parent's ball. For a size graph that is backwards: siblings on a
+       * cap are separated by roughly r × their angular step, so a heavy child needs
+       * a *longer* limb, not a shorter one — subtracting put the biggest ball on the
+       * shortest branch, right where its neighbours already are. */
+      const reach = ownRadius ? room * 0.8 + childOuter : room - childOuter;
+      const r = Math.max(target, reach) *
         (0.85 + Math.min(0.5, Math.cbrt(weight) * 0.5));
       const p: Vec3 = [at[0] + c[0] * r, at[1] + c[1] * r, at[2] + c[2] * r];
       pos.set(child, p);
@@ -748,6 +868,70 @@ function fitToSpacing(nodes: GraphNode[], target: number): GraphNode[] {
   return nodes;
 }
 
+/* Quantile of the sampled *need* for more room, when node radii are data.
+ *
+ * fitToSpacing is the wrong closing step for a size graph and measurably so: it
+ * drives median nearest-neighbour *centre* distance to a target, which for uniform
+ * spheres is the same thing as separating them and for varied spheres is not. On a
+ * 26k-file tree it scaled the layout down until 53–69% of sampled spheres
+ * intersected one of their neighbours — the radius reservation was computed
+ * correctly and then thrown away by the fit.
+ *
+ * So the size-aware path measures the quantity that actually matters, which is
+ * surface clearance (centre distance minus both radii), and only ever scales *up*.
+ * Positions move; radii do not, because the radii are the data — a size map that
+ * resizes its spheres to fit the layout is no longer a size map.
+ *
+ * A quantile rather than the maximum: one pathological pair (a 400 MB archive that
+ * happens to land beside its sibling) would otherwise blow the whole scene up by
+ * its own worst case. What the quantile leaves overlapping is reported by the
+ * caller rather than passed off as clean. */
+function radiiScale(
+  nodes: GraphNode[],
+  radiusOf: (n: GraphNode) => number,
+  gap: number,
+  quantile: number,
+  samples = 400,
+): number {
+  const step = Math.max(1, Math.floor(nodes.length / samples));
+  const needs: number[] = [];
+  for (let i = 0; i < nodes.length; i += step) {
+    const p = nodes[i];
+    const pr = radiusOf(p);
+    let need = 0;
+    for (let j = 0; j < nodes.length; j++) {
+      if (j === i) continue;
+      const q = nodes[j];
+      const d = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+      /* Coincident nodes carry no direction to separate along; scaling cannot fix
+       * them and letting them in would demand an infinite factor. */
+      if (!(d > 0)) continue;
+      const want = (pr + radiusOf(q) + gap) / d;
+      if (want > need) need = want;
+    }
+    if (need > 0) needs.push(need);
+  }
+  if (needs.length === 0) return 1;
+  needs.sort((a, b) => a - b);
+  const k = needs[Math.min(needs.length - 1, Math.floor(quantile * needs.length))];
+  return Math.min(64, Math.max(1, k));
+}
+
+/* Separate the spheres, never shrink them. */
+function fitToRadii(
+  nodes: GraphNode[],
+  radiusOf: (n: GraphNode) => number,
+  gap: number,
+): GraphNode[] {
+  if (nodes.length < 2) return nodes;
+  const k = radiiScale(nodes, radiusOf, gap, RADII_FIT_QUANTILE);
+  if (k <= 1.02) return nodes;
+  for (const n of nodes) {
+    n.x *= k; n.y *= k; n.z *= k;
+  }
+  return nodes;
+}
+
 /* Re-center on the origin. */
 function centered(nodes: GraphNode[]): GraphNode[] {
   if (nodes.length === 0) return nodes;
@@ -772,16 +956,53 @@ export function applyViewMode(
   mode: ViewMode,
   params: LayoutParams,
   hierarchy?: Hierarchy,
+  /* Drawn radius per node, for graphs where the radius is data rather than a
+   * constant — the size map, whose whole point is that a sphere's volume is its
+   * file's byte count. Given, the layout reserves room for the real radii, takes
+   * its spacing target from them instead of from the incoming coordinates (which a
+   * size graph does not have — every node starts at the origin), and rescales the
+   * radii alongside the coordinates in the final fit. */
+  radiusOf?: (node: GraphNode) => number,
 ): GraphNode[] {
   if (mode === "default" || nodes.length === 0) return nodes;
 
   const h = hierarchy ?? deriveHierarchy(nodes, edges);
-  const target = sampleSpacing(nodes) * params.spread;
+
+  /* Slot → the room its own nodes need, and the spacing target, both derived from
+   * the radii when there are radii to derive them from. */
+  let ownRadius: ((slot: Slot) => number) | undefined;
+  let target: number;
+  let medianRadius = 1;
+  if (radiusOf) {
+    const byId = new Map<number, GraphNode>();
+    for (const n of nodes) byId.set(n.id, n);
+    const radii = nodes.map(radiusOf).filter((r) => r > 0);
+    radii.sort((a, b) => a - b);
+    medianRadius = radii.length > 0 ? radii[Math.floor(radii.length / 2)] : 1;
+    /* Median spacing at SIZE_SPACING_K median radii: the typical pair of
+     * neighbours has a clear gap between them, and the outliers get their room
+     * from the reservation rather than from the average. */
+    target = medianRadius * SIZE_SPACING_K * params.spread;
+    ownRadius = (slot) => {
+      let max = 0;
+      for (const id of slot.ids) {
+        const node = byId.get(id);
+        if (node) {
+          const r = radiusOf(node);
+          if (r > max) max = r;
+        }
+      }
+      return max;
+    };
+  } else {
+    target = sampleSpacing(nodes) * params.spread;
+  }
 
   let placed: Map<Slot, Vec3>;
-  if (mode === "sphere") placed = layoutSphere(h, target);
-  else if (mode === "cone") placed = layoutCone(h, target, params.coneSteep);
-  else placed = layoutOrganic(h, target, params.branchSpread, params.leafShape);
+  if (mode === "sphere") placed = layoutSphere(h, target, ownRadius);
+  else if (mode === "cone") placed = layoutCone(h, target, params.coneSteep, ownRadius);
+  else
+    placed = layoutOrganic(h, target, params.branchSpread, params.leafShape, ownRadius);
 
   const out = nodes.map((n) => {
     const slot = h.slotOf.get(n.id);
@@ -808,7 +1029,12 @@ export function applyViewMode(
     };
   }
 
-  return fitToSpacing(centered(out), target);
+  /* Two different closing steps, because the two graphs are calibrated against
+   * two different things: a uniform-sphere graph against the source layout's own
+   * spacing, a size graph against its own radii. */
+  return radiusOf
+    ? fitToRadii(centered(out), radiusOf, medianRadius * RADII_FIT_GAP_K)
+    : fitToSpacing(centered(out), target);
 }
 
 /* ── Path to root ──────────────────────────────────────────────── */

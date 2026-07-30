@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   useGraphData,
@@ -49,31 +50,10 @@ import { colorForLabel, colorForStatus, setLabelColorOverrides } from "../lib/co
 import { downloadStaticPage } from "../lib/exportStatic";
 import { resolvedTheme, themeVar } from "../lib/theme";
 import { stageForTheme } from "../lib/sceneInk";
+import { loadFlag, loadWidth, saveFlag, saveWidth } from "../lib/panelState";
 
-/* Persist panel widths */
-function loadWidth(key: string, fallback: number): number {
-  try {
-    const v = localStorage.getItem(key);
-    if (v) return Math.max(150, Math.min(600, parseInt(v, 10)));
-  } catch { /* ignore */ }
-  return fallback;
-}
-function saveWidth(key: string, value: number) {
-  try { localStorage.setItem(key, String(Math.round(value))); } catch { /* ignore */ }
-}
-
-/* Persist which sidebar panels are open */
-function loadFlag(key: string, fallback: boolean): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    if (v === "0") return false;
-    if (v === "1") return true;
-  } catch { /* ignore */ }
-  return fallback;
-}
-function saveFlag(key: string, value: boolean) {
-  try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* ignore */ }
-}
+/* Panel widths and fold state live in lib/panelState.ts, shared with the size tab
+ * so both tabs read and write the same keys. */
 
 /* Persist the node budget per project */
 function budgetKey(project: string): string {
@@ -626,16 +606,15 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
               column's free space is pushed above the header, so the strip lands on
               the bottom edge instead of riding up under Filters.
 
-              Only while Filters is open, though. With both folded there is no open
-              section to hand the gap to, and pinning this one to the floor turns
-              the whole sidebar into a void between two strips — so they sit
-              together at the top instead. */
+              Unconditional, by owner ruling. An earlier pass dropped it when
+              Filters was also collapsed, reasoning that two strips straddling an
+              empty column looked worse than two stacked at the top. That was my
+              metric, not the owner's: Folders belongs on the floor of the sidebar
+              and stays there whatever its neighbour does, because a control that
+              moves when an unrelated panel folds is a control you have to hunt
+              for. Do not re-derive this from how the empty space looks. */
           className={
-            foldersOpen
-              ? "flex-1 min-h-0"
-              : filtersOpen
-                ? "shrink-0 mt-auto border-t border-border/40"
-                : "shrink-0 border-t border-border/40"
+            foldersOpen ? "flex-1 min-h-0" : "shrink-0 mt-auto border-t border-border/40"
           }
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
@@ -780,7 +759,10 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
                   aria-label="Open the size map"
                   title="Same corpus, measured in bytes"
                 >
-                  Sizes
+                  {/* The tab's own glyph, not the word: the two views cross-link to
+                      each other constantly, and a button that shows where it goes
+                      beats one that names it. Same icon as the header tab. */}
+                  <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
                 </Button>
               )}
               <Button

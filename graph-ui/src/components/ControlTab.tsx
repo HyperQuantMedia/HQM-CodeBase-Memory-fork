@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ProcessInfo } from "../lib/types";
 import { useUiMessages } from "../lib/i18n";
@@ -83,9 +83,46 @@ function ProcessCard({ proc, selected, onSelect, onKill }: {
 
 /* ── Log viewer ─────────────────────────────────────────── */
 
+/* Severity carried by a log line, from the logfmt `level=` key the server emits.
+ * Absent — a bare line, or a continuation of a multi-line message — reads as
+ * "other" rather than being guessed at or dropped. */
+export function logLevel(line: string): string {
+  const m = /\blevel=([A-Za-z]+)/.exec(line);
+  return m ? m[1].toLowerCase() : "other";
+}
+
+/* Colour per level. Only error and warn had one before, which is right for reading
+ * a wall of text and useless for picking a level out of it. */
+const LEVEL_CLASS: Record<string, string> = {
+  error: "text-destructive",
+  fatal: "text-destructive",
+  warn: "text-warning",
+  warning: "text-warning",
+  info: "text-foreground/70",
+  debug: "text-ink-dim",
+  trace: "text-ink-faint",
+  other: "text-ink-dim",
+};
+
+/* Severity order for the chips, so they read worst-first rather than in whatever
+ * order the buffer happened to mention them. Unknown levels sort last, alphabetical
+ * among themselves — the server may add one this list has never heard of. */
+const LEVEL_ORDER = ["fatal", "error", "warn", "warning", "info", "debug", "trace"];
+
+function levelRank(level: string): number {
+  const i = LEVEL_ORDER.indexOf(level);
+  return i === -1 ? LEVEL_ORDER.length : i;
+}
+
 function LogViewer() {
   const t = useUiMessages();
   const [lines, setLines] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
+  /* Which levels are switched off. Storing the exclusions rather than the
+   * inclusions means a level that first appears mid-session (the first error of the
+   * run) shows up immediately instead of being invisible until someone notices a
+   * new chip and enables it. */
+  const [muted, setMuted] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const poll = setInterval(async () => {
@@ -100,31 +137,106 @@ function LogViewer() {
     return () => clearInterval(poll);
   }, []);
 
+  /* Levels actually present, with counts — a chip for a level the buffer does not
+   * contain is a control that does nothing. */
+  const levelCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const line of lines) {
+      const level = logLevel(line);
+      counts.set(level, (counts.get(level) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort(
+      (a, b) => levelRank(a[0]) - levelRank(b[0]) || a[0].localeCompare(b[0]),
+    );
+  }, [lines]);
+
+  const shown = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return lines.filter((line) => {
+      if (muted.has(logLevel(line))) return false;
+      return needle === "" || line.toLowerCase().includes(needle);
+    });
+  }, [lines, search, muted]);
+
+  const toggleLevel = useCallback((level: string) => {
+    setMuted((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  }, []);
+
+  const filtering = search.trim() !== "" || muted.size > 0;
+
   return (
     <div className="rounded-xl border border-border/30 bg-code overflow-hidden">
-      <div className="px-4 py-2 border-b border-border/20">
+      <div className="px-4 py-2 border-b border-border/20 flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-medium text-ink-soft">{t.control.processLogs}</span>
-        <span className="text-[10px] text-ink-faint ml-2">{lines.length} lines</span>
+        <span className="text-[10px] text-ink-faint tabular-nums">
+          {filtering
+            ? `${shown.length.toLocaleString()} of ${lines.length.toLocaleString()} lines`
+            : `${lines.length.toLocaleString()} lines`}
+        </span>
+
+        {/* Level chips: click to mute, click again to restore. */}
+        <div className="flex flex-wrap items-center gap-1">
+          {levelCounts.map(([level, count]) => {
+            const on = !muted.has(level);
+            return (
+              <button
+                key={level}
+                onClick={() => toggleLevel(level)}
+                aria-pressed={on}
+                title={`${on ? "Hide" : "Show"} ${level} lines`}
+                className={`inline-flex items-center gap-1 px-1.5 py-[2px] rounded-md text-[10px] font-medium border transition-all ${
+                  on
+                    ? `border-border/60 bg-foreground/[0.04] ${LEVEL_CLASS[level] ?? LEVEL_CLASS.other}`
+                    : "border-transparent opacity-25 text-ink-dim"
+                }`}
+              >
+                {level}
+                <span className="text-ink-faint tabular-nums">{count.toLocaleString()}</span>
+              </button>
+            );
+          })}
+          {muted.size > 0 && (
+            <button
+              onClick={() => setMuted(new Set())}
+              className="text-[10px] text-primary/70 hover:text-primary transition-colors"
+            >
+              all
+            </button>
+          )}
+        </div>
+
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter lines…"
+          aria-label="Filter log lines by substring"
+          title="Case-insensitive substring match over the whole line"
+          className="ml-auto w-44 bg-foreground/[0.04] border border-border/50 rounded-md px-2 py-1 text-[11px] text-foreground placeholder-foreground/25 outline-none focus:border-primary/40"
+        />
       </div>
       <ScrollArea className="h-[400px]">
         <div className="p-3 font-mono text-[10px] leading-relaxed">
           {lines.length === 0 ? (
             <p className="text-ink-faint text-center py-8">{t.control.noLogs}</p>
+          ) : shown.length === 0 ? (
+            <p className="text-ink-faint text-center py-8">
+              No lines match. {lines.length.toLocaleString()} hidden by the filter.
+            </p>
           ) : (
-            lines.map((line, i) => {
-              const isErr = line.includes("level=error");
-              const isWarn = line.includes("level=warn");
-              return (
-                <div
-                  key={i}
-                  className={`py-[1px] ${
-                    isErr ? "text-destructive" : isWarn ? "text-warning" : "text-ink-dim"
-                  }`}
-                >
-                  {line}
-                </div>
-              );
-            })
+            shown.map((line, i) => (
+              <div
+                key={i}
+                className={`py-[1px] ${LEVEL_CLASS[logLevel(line)] ?? LEVEL_CLASS.other}`}
+              >
+                {line}
+              </div>
+            ))
           )}
         </div>
       </ScrollArea>
