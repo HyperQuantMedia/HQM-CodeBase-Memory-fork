@@ -40,6 +40,24 @@ workflow that declared no `workflow_call` and passed an input it never had, and 
 workflows declared `type: number` on a `workflow_dispatch` input, which is illegal. `7825f288`,
 `dce7050c`.
 
+**Landed and pushed to `origin/HQM-dev` on 2026-07-30** (`ea3e54f6..155f7bdc`), all signed, none
+promoted further:
+
+| Commit | What |
+|---|---|
+| `e28279db` | size map as a fourth projection; one shell for both views; 4 defects fixed |
+| `e4c21a1c` | the two rulings, the rounds 5–8 spine, `bugs.md` + `backlog.md` |
+| `7825f288` | non-callable `soak.yml` reference; deprecated `baseUrl` removed |
+| `dce7050c` | `type: number` illegal under `workflow_dispatch` |
+| `c4f2aa26` | **B8** — the reusable-workflow diagnostics are an editor false positive |
+| `155f7bdc` | the CI-dark claim in this file was wrong; corrected |
+
+**Promotion has not happened, and the gap is wider than this cycle.** `Merged` and `main` are both
+still at `56c2feb9` — **HQM-dev is 14 commits ahead of main**, which is the whole usability arc
+(`46d3f0c3` … `279d7e25`) plus all of the above. HQM-dev → Merged → main, owner-gated, and the
+visual pass (**B1**) comes first. Note the consequence: crons and dispatched workflows are read
+from the default branch, so none of the CI fixes in this list are in effect on `main` yet.
+
 **The live edge is the owner's visual verification of rounds 5–8** — logged as **B1** in
 [`bugs.md`](bugs.md), with the specific surfaces and the one open question (the size
 projections' density). Three of the first four rounds produced corrections nothing local
@@ -149,8 +167,12 @@ suite as evidence that a visual change works.
 - **CI is mostly dark** (owner order). Build and validate locally. Verify the real state
   rather than trusting this list — `gh workflow list --all --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
   As of 2026-07-30: `disabled_manually` = CodeQL SAST, DCO, Deploy Pages, Release, OpenSSF
-  Scorecard, Stale, **Nightly Soak**. Still **active** = Security Gate, and Dependency Graph
-  (GitHub-managed, cannot be disabled with `gh workflow disable`).
+  Scorecard, Stale, **Nightly Soak**. Still **active** = Security Gate and Dependency Graph.
+  - Neither active one can fire on its own: `_security.yml` (Security Gate) declares
+    `workflow_call` and nothing else, so it runs only when a caller runs — and its only caller,
+    `release.yml`, is disabled. Dependency Graph is GitHub-managed and cannot be disabled with
+    `gh workflow disable` (seconds of runtime). **A push to HQM-dev starts no run**; confirmed
+    on the 2026-07-30 push of `ea3e54f6..155f7bdc`, which created nothing.
   - **Nightly Soak was `active` until 2026-07-30** despite its header comment implying the
     cron removal had handled it. Removing a cron stops the schedule; it does not disable the
     workflow. Two independent means are now in place. Check state, do not infer it from a
