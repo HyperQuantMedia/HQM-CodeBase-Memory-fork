@@ -1,0 +1,9 @@
+# HQM-authored. Copyright (C) 2026 HyperQuant Media L.L.P.
+# Scoped to hqm/ deliberately: the repo-root .gitattributes is upstream-owned, and
+# changing it would be a unilateral edit to their file (same class as B4/B5 in bugs.md).
+#
+# Shell scripts must check out with LF even on Windows, where core.autocrlf=true would
+# otherwise hand them back with CRLF — a `.sh` with CRLF fails as `bash: \r: command
+# not found`. The exec bit is recorded in the index (core.filemode is false here, so it
+# has to be set with `git update-index --chmod=+x`, not by the filesystem).
+*.sh text eol=lf

@@ -29,6 +29,7 @@ A session opened in this repo alone should be able to reach competent continuati
 | [`backlog.md`](backlog.md) | proposed work, blocked work, open questions — everything that is *not* a defect |
 | [`decisions/`](decisions/) | one settled ruling per file, dated; the *why*, the options weighed, the consequences |
 | [`notes/`](notes/) | session captures — the full spine behind a decision, with confidence labels |
+| [`scripts/`](scripts/) | HQM-owned tooling that operates on this fork; excluded from upstream offers like the rest of `hqm/` |
 
 `bugs.md` and `backlog.md` are the two working surfaces; `decisions/` is what has stopped
 moving. A thing that is in neither register and has no decision record is **not tracked** —

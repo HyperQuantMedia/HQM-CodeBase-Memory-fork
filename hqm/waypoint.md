@@ -121,6 +121,8 @@ suite as evidence that a visual change works.
 ## Active set
 
 - [`bugs.md`](bugs.md) · [`backlog.md`](backlog.md) — the two working registers
+- [`decisions/2026-07-31-vanilla-sync.md`](decisions/2026-07-31-vanilla-sync.md) — how
+  `vanilla-upstream` follows upstream without lighting the repo up
 - [`decisions/2026-07-30-view-parity.md`](decisions/2026-07-30-view-parity.md) — one shell, two
   measures; and the type scale
 - [`decisions/2026-07-30-size-map-as-projection.md`](decisions/2026-07-30-size-map-as-projection.md)
@@ -164,6 +166,13 @@ suite as evidence that a visual change works.
 - **Branches:** `HQM-dev` = active dev · `vanilla-upstream` = upstream pull-in only ·
   `Merged` = integration · `main` = stable face of Merged, repo default. **Promotion is
   HQM-dev → Merged → main. Never HQM-dev → main, never a direct commit on main.**
+- **Syncing `vanilla-upstream`:** `hqm/scripts/sync-vanilla.sh` (report only) then
+  `--push`. Never checked out — the push is a refspec from the fetched upstream ref, so no
+  local branch exists to drift. It **refuses** when the incoming range adds or renames a file
+  under `.github/workflows/`, and refuses when the branch is not an ancestor of
+  `upstream/main`. `--setup` is the one-time local config. Ruling and the rejected
+  alternatives: [`decisions/2026-07-31-vanilla-sync.md`](decisions/2026-07-31-vanilla-sync.md).
+  Last synced 2026-07-31: `7dd8d220 → a65faeb4`, 23 commits, no run created.
 - **CI is mostly dark** (owner order). Build and validate locally. Verify the real state
   rather than trusting this list — `gh workflow list --all --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
   As of 2026-07-30: `disabled_manually` = CodeQL SAST, DCO, Deploy Pages, Release, OpenSSF
@@ -180,6 +189,16 @@ suite as evidence that a visual change works.
   - Crons and dispatched workflows are read from the *default* branch, so a CI-config fix only
     takes effect once it reaches main. Re-enable with
     `gh workflow enable <file> --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
+  - **`gh workflow list` is not an inventory.** 21 workflow files sit on `main`; only **9**
+    are registered with Actions (8 file-backed + `dynamic/dependabot/update-graph`).
+    Registration is lazy, so the other 13 have no workflow id and **cannot be disabled in
+    advance** — a workflow file arriving from upstream is enabled by default with nothing to
+    have switched off. This is why the vanilla sync refuses on an added workflow file rather
+    than relying on a pre-emptive disable.
+  - Only **`dco.yml`** has an unfiltered `on: push`; it is disabled. Everything else is scoped
+    to `main`, to `qa/**`, or is `workflow_call` / `workflow_dispatch` / `schedule`. That is
+    the reason a push to a non-`main` branch starts nothing — verify it, do not assume it:
+    `gh run list --repo HyperQuantMedia/HQM-CodeBase-Memory-fork --limit 5`.
 - **Ignore the 7 "Unable to find reusable workflow" errors** VS Code shows on the same-repo
   `uses:` lines in `release.yml` and `nightly-soak.yml`. Editor false positive, evidence and the
   rejected "fix" recorded as **B8** in [`bugs.md`](bugs.md). Do not rewrite those paths.
@@ -189,8 +208,13 @@ suite as evidence that a visual change works.
   HQM-Astra's `cbm.pin.json` update waits on a published release.
 - Upstream patch offer (owner-gated):
   `git checkout -b feat/knowledge-overlay-ingest upstream/main && git cherry-pick c8d4d25c 28f32e70 f52a791f`
-  — one help-text conflict in `cli.c` resolves to the 16-tool list. The fork has no GitHub fork
-  linkage, so a cross-repo PR needs a true fork or an issue+patch offer.
+  — one help-text conflict in `cli.c` resolves to the 16-tool list. **This repo IS a true
+  GitHub fork** (`fork: true`, parent `DeusData/codebase-memory-mcp`, confirmed against the API
+  2026-07-31), so a direct cross-repo PR is available whenever an offer is authorised. An earlier
+  version of this file claimed the opposite; it was wrong.
+  The `upstream` remote's **push URL is set to `DISABLED`** so a stray `git push upstream` cannot
+  reach DeusData. Fetch is unaffected. Restore it deliberately when making an offer:
+  `git remote set-url --push upstream https://github.com/DeusData/codebase-memory-mcp.git`.
 - Commits carry Rahul's git identity and a `Signed-off-by` trailer. **No AI co-author trailer,
   ever.**
 
