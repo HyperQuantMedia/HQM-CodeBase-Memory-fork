@@ -774,6 +774,14 @@ static void handle_open(cbm_http_conn_t *c, const cbm_http_req_t *req) {
         snprintf(abs_path, sizeof(abs_path), "%s/%s", root_path, rel);
     }
 
+    /* Existence is checked first only so a legitimate missing file reports 404
+     * rather than a confusing 403: cbm_path_within_root resolves through
+     * realpath, which fails outright on a path that does not exist. The launch
+     * itself is gated by the containment check below unconditionally, so the
+     * order affects only which error a caller sees, never what can be opened.
+     * (It does let a loopback caller distinguish "missing" from "outside root"
+     * for paths beyond the corpus — accepted: anyone able to POST here already
+     * runs code as this user.) */
     if (!cbm_file_exists(abs_path) && !cbm_is_dir(abs_path)) {
         cbm_http_replyf(c, 404, g_cors_json, "{\"error\":\"path does not exist\"}");
         return;
