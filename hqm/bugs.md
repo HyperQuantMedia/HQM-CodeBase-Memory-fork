@@ -113,6 +113,50 @@ filter, so that would also break the documented way of *running* the probes.
 **Fix shape:** rename the rigs off the `.test.ts` suffix and invoke them through their own
 config, or commit small fixtures. Neither is urgent while the rigs are throwaway.
 
+### B8 — VS Code reports "Unable to find reusable workflow" on every local `uses:`
+
+**Severity:** noise, but expensive noise · **Status:** editor-side false positive — **do not "fix" the
+paths**
+
+The GitHub Actions extension flags every same-repo reusable-workflow reference as an error. Seven
+diagnostics, all identical, one per reference and nothing else:
+
+```
+release.yml      :44 :49 :54 :62 :69 :77   uses: ./.github/workflows/_{security,lint,test,build,smoke,soak}.yml
+nightly-soak.yml :33                       uses: ./.github/workflows/soak.yml
+message: "Unable to find reusable workflow"   severity 8 (Error)
+```
+
+**The references are correct.** Three independent confirmations:
+
+1. All seven callee files exist at those repo-relative paths and every one declares `workflow_call`.
+2. `./.github/workflows/<file>.yml` is GitHub's **only** valid same-repo form, and it is what all 16
+   references across 7 caller workflows use — there is no other convention in this repo to conform to.
+3. **GitHub itself resolved them.** Run `30495762643` (release.yml, 2026-07-29) produced jobs named
+   `security / security-static`, `lint / lint`, `test / test-unix (…)`, `build / build-windows`. That
+   `caller / callee` naming only happens when a reusable reference resolves; an unresolvable one fails
+   the run at parse time and produces no jobs at all.
+
+Likely cause: the extension resolves `./` against the wrong workspace folder. This is a 15-folder
+multi-root window, and `F:\Git\.github\workflows` and `F:\Git\HyperQuantMedia\.github\workflows` both
+do not exist — so a lookup from either root finds nothing, while the nine pinned third-party actions
+in release.yml keep resolving over the network. Survived a window reload. The same misbinding is the
+best explanation for files rendering as untracked in the explorer while `git status` reports them
+clean.
+
+**Confirmation test:** open `F:\Git\HQM-CodeBase-Memory-fork` in its own single-root window. If the
+seven clear, it is the extension.
+
+**Do not** rewrite these to `owner/repo/.github/workflows/x.yml@ref` to silence it. That form is valid
+syntax but cross-repo semantics: the callee is read from the named ref rather than the commit under
+test, so a PR changing a reusable workflow would be validated against the old copy; it hard-codes the
+fork's name, breaking on other branches and poisoning any patch offered upstream; and it would leave
+two conventions in one repo. Weighed and rejected 2026-07-30.
+
+Two *real* defects were found in these files while chasing this, and both are fixed: the non-callable
+`soak.yml` reference (`7825f288`) and `type: number` under `workflow_dispatch`, which is illegal —
+only `boolean`, `choice`, `environment`, `string` are (`dce7050c`).
+
 ---
 
 ## Closed this cycle
