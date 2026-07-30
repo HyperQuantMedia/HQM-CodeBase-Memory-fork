@@ -24,9 +24,14 @@ on:
   workflow_dispatch:
     inputs:
       duration_minutes:
+        # `string`, not `number` — workflow_dispatch allows only boolean, choice,
+        # environment and string. See the same note in nightly-soak.yml. The
+        # workflow_call block below is where `number` is legal, and the jobs read
+        # the value through `${{ inputs.duration_minutes || '240' }}` into an env
+        # var, so a string here changes nothing at runtime.
         description: 'Soak duration in minutes (default: 240 = 4h)'
-        type: number
-        default: 240
+        type: string
+        default: '240'
       mode:
         description: 'Soak mode (query-leak = #581 detector, no reindex/mutate)'
         type: choice

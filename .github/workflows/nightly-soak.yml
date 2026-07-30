@@ -16,9 +16,14 @@ on:
   workflow_dispatch:
     inputs:
       duration_minutes:
+        # `string`, not `number`: workflow_dispatch accepts only boolean, choice,
+        # environment and string. `number` is legal for workflow_call inputs and
+        # nowhere else, so declaring it here is a schema error — and a misleading
+        # one, because GitHub hands every dispatch input to the workflow as a
+        # string regardless of what the type says.
         description: 'Soak duration in minutes (default: 240 = 4h)'
-        type: number
-        default: 240
+        type: string
+        default: '240'
 
 permissions:
   contents: read
@@ -27,7 +32,10 @@ jobs:
   soak:
     uses: ./.github/workflows/soak.yml
     with:
-      duration_minutes: ${{ inputs.duration_minutes || 240 }}
+      # fromJSON, because soak.yml's workflow_call input really is `number` and
+      # the dispatch value arrives as a string. `${{ inputs.x || 240 }}` yields
+      # that string, which is a type mismatch the call rejects.
+      duration_minutes: ${{ fromJSON(inputs.duration_minutes || '240') }}
       # soak.yml's inputs are duration_minutes + mode. It has no `run_asan`:
       # ASan is decided inside its own job matrix, not by the caller. Passing
       # run_asan here was an undeclared input and would have failed the call.
