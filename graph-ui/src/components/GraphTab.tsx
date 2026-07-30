@@ -26,9 +26,9 @@ import {
   computeReferenceForks,
   deriveHierarchy,
   VIEW_MODE_LABEL,
-  VIEW_MODE_SHORT,
   VIEW_MODES,
 } from "../lib/viewLayout";
+import { VIEW_MODE_ICON } from "./ViewModeIcons";
 import {
   GraphScene,
   computeCameraTarget,
@@ -46,6 +46,7 @@ import type { GraphNode, GraphData, RepoInfo } from "../lib/types";
 import { colorForLabel, colorForStatus, setLabelColorOverrides } from "../lib/colors";
 import { downloadStaticPage } from "../lib/exportStatic";
 import { resolvedTheme, themeVar } from "../lib/theme";
+import { stageForTheme } from "../lib/sceneInk";
 
 /* Persist panel widths */
 function loadWidth(key: string, fallback: number): number {
@@ -132,9 +133,12 @@ export function GraphTab({ project }: GraphTabProps) {
   /* Re-read themed CSS vars whenever the theme flips (the 3D canvas clears with
    * a literal colour, so it cannot inherit one). */
   const [themeTick, setThemeTick] = useState(0);
+  /* The 3D scene is not just differently-coloured between themes, it is a
+     different rendering model — see lib/sceneInk.ts. */
+  const stage = useMemo(() => stageForTheme(resolvedTheme()), [themeTick]);
   const canvasBg = useMemo(
-    () => themeVar("--color-canvas", resolvedTheme() === "light" ? "#eef1f8" : "#06090f"),
-    [themeTick],
+    () => themeVar("--color-canvas", stage === "light" ? "#f2f4fa" : "#06090f"),
+    [themeTick, stage],
   );
   useEffect(() => {
     const onTheme = () => setThemeTick((t) => t + 1);
@@ -274,6 +278,23 @@ export function GraphTab({ project }: GraphTabProps) {
     };
   }, [filteredData, hierarchy, view.mode, view.layout]);
 
+  /* Reframe on a projection change.
+   *
+   * The alternate views are built from a target node spacing rather than fitted
+   * into the server layout's box, so their extent is genuinely different — the
+   * organic tree over a 47k-node corpus is an order of magnitude larger than the
+   * force layout. Without this the camera keeps its old framing and the new
+   * projection is a speck, or is behind the near plane; either reads as the view
+   * being broken rather than merely misframed. */
+  useEffect(() => {
+    if (!viewData || viewData.nodes.length === 0) return;
+    const all = new Set(viewData.nodes.map((n) => n.id));
+    setCameraTarget(computeCameraTarget(viewData.nodes, all));
+    /* Deliberately keyed on the projection alone: reframing on every data change
+     * would yank the camera back whenever a filter toggles. */
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [view.mode, view.layout]);
+
   /* Breadcrumb + path light both key off the single selected node. */
   const crumbs = useMemo(
     () => (selectedNode && hierarchy ? computeCrumbs(selectedNode.id, hierarchy) : []),
@@ -288,6 +309,15 @@ export function GraphTab({ project }: GraphTabProps) {
     if (!view.pathLight || !selectedNode || !filteredData) return undefined;
     return computeReferenceForks(selectedNode.id, filteredData.edges);
   }, [view.pathLight, selectedNode, filteredData]);
+
+  /* "" means "follow the strands" — PathLight then takes each hop's colour from
+     the graph instead of a fixed value. */
+  const pathLightColor =
+    view.pathLightColorMode === "strand"
+      ? ""
+      : view.pathLightColorMode === "theme"
+        ? themeVar("--color-primary", "#ffce6e")
+        : view.pathLightColor;
 
   const labelsInGraph = useMemo(
     () => (data ? [...new Set(data.nodes.map((n) => n.label))] : []),
@@ -422,10 +452,12 @@ export function GraphTab({ project }: GraphTabProps) {
     setEnabledEdgeTypes(new Set());
   }, []);
 
+  const ViewIcon = VIEW_MODE_ICON[view.mode];
+
   if (!project) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-white/30 text-sm">
+        <p className="text-ink-dim text-sm">
           Select a project from the Projects tab
         </p>
       </div>
@@ -444,7 +476,7 @@ export function GraphTab({ project }: GraphTabProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center p-8">
-          <p className="text-red-400 text-sm mb-2">{error}</p>
+          <p className="text-destructive text-sm mb-2">{error}</p>
           <Button variant="outline" size="sm" onClick={() => fetchOverview(project)}>
             Retry
           </Button>
@@ -459,7 +491,7 @@ export function GraphTab({ project }: GraphTabProps) {
   if (!data || !filteredData || data.nodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-white/30 text-sm">No nodes in this project</p>
+        <p className="text-ink-dim text-sm">No nodes in this project</p>
       </div>
     );
   }
@@ -516,7 +548,7 @@ export function GraphTab({ project }: GraphTabProps) {
           }
           className={foldersOpen ? "flex-1" : "shrink-0"}
           actions={
-            <span className="text-[10px] text-foreground/25 tabular-nums">
+            <span className="text-[10px] text-ink-dim tabular-nums">
               {filteredData.nodes.length.toLocaleString()}
             </span>
           }
@@ -545,7 +577,7 @@ export function GraphTab({ project }: GraphTabProps) {
         {filteredData.nodes.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <p className="text-white/30 text-sm mb-3">All nodes filtered out</p>
+              <p className="text-ink-dim text-sm mb-3">All nodes filtered out</p>
               <Button size="sm" onClick={enableAll}>
                 Reset Filters
               </Button>
@@ -567,7 +599,10 @@ export function GraphTab({ project }: GraphTabProps) {
                 autoRotate={view.autoRotate}
                 pathLightStyle={view.pathLightStyle}
                 pathLightSpeed={view.pathLightSpeed}
-                pathLightColor={view.pathLightColor}
+                pathLightColor={pathLightColor}
+                pathLightAccel={view.pathLightAccel}
+                stage={stage}
+                edgeCurve={display.edgeCurve}
                 background={canvasBg}
               />
             </ErrorBoundary>
@@ -578,21 +613,21 @@ export function GraphTab({ project }: GraphTabProps) {
             {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
             {/* HUD */}
-            <div className="absolute top-4 left-4 text-[11px] text-white/30 pointer-events-none font-mono">
+            <div className="absolute top-4 left-4 text-[11px] text-ink-dim pointer-events-none font-mono">
               <p>
                 {filteredData.nodes.length.toLocaleString()} nodes /{" "}
                 {filteredData.edges.length.toLocaleString()} edges
               </p>
               {data.nodes.length > filteredData.nodes.length && (
-                <p className="text-white/25 mt-0.5">
+                <p className="text-ink-dim mt-0.5">
                   filtered from {data.nodes.length.toLocaleString()}
                 </p>
               )}
               {limitNotice && (
-                <p className="text-amber-300/80 mt-0.5">{limitNotice}</p>
+                <p className="text-warning mt-0.5">{limitNotice}</p>
               )}
               {highlightedIds && highlightedIds.size > 0 && (
-                <p className="text-cyan-400/50 mt-0.5">
+                <p className="text-info mt-0.5">
                   {highlightedIds.size} selected
                 </p>
               )}
@@ -615,7 +650,7 @@ export function GraphTab({ project }: GraphTabProps) {
               <div className="flex items-center gap-1.5 h-8 px-2 rounded-md border border-border/50 bg-card/80 backdrop-blur-sm">
                 <label
                   htmlFor="node-budget"
-                  className="text-[10px] uppercase tracking-wider text-white/40"
+                  className="text-[10px] uppercase tracking-wider text-ink-soft"
                 >
                   Nodes
                 </label>
@@ -633,7 +668,7 @@ export function GraphTab({ project }: GraphTabProps) {
                       e.currentTarget.blur();
                     }
                   }}
-                  className="w-24 bg-transparent text-right text-xs font-mono text-cyan-200/90 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-24 bg-transparent text-right text-xs font-mono text-info outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   aria-label="Node budget: how many nodes to load"
                   title="How many nodes to load (5,000 steps, edges between loaded nodes follow automatically)"
                 />
@@ -675,9 +710,9 @@ export function GraphTab({ project }: GraphTabProps) {
                   })
                 }
                 aria-label={`View: ${VIEW_MODE_LABEL[view.mode]} — click to cycle`}
-                title="Cycle projection: force, sphere, cone, tree"
+                title={`${VIEW_MODE_LABEL[view.mode]} — click to cycle projection`}
               >
-                {VIEW_MODE_SHORT[view.mode]}
+                {ViewIcon && <ViewIcon />}
               </Button>
               <Button
                 variant="outline"

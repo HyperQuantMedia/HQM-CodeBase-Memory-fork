@@ -14,7 +14,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 backdrop-blur-sm p-6"
+      className="absolute inset-0 z-30 flex items-center justify-center bg-scrim backdrop-blur-sm p-6"
       onClick={onClose}
     >
       <div
@@ -26,13 +26,13 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         <button
           onClick={onClose}
           aria-label="Close help"
-          className="absolute top-3 right-3 text-foreground/30 hover:text-foreground/70 transition-colors text-[18px] leading-none p-1"
+          className="absolute top-3 right-3 text-ink-dim hover:text-foreground/70 transition-colors text-[18px] leading-none p-1"
         >
           ×
         </button>
 
         <h2 className="text-[15px] font-semibold mb-1">How the graph works</h2>
-        <p className="text-[12px] text-foreground/50 leading-relaxed mb-4">
+        <p className="text-[12px] text-ink-soft leading-relaxed mb-4">
           Every indexed thing is a node; edges are the relationships between
           them. Colour is the node's label (see the Filters panel — click a chip
           to hide that type). Size grows with how connected a node is.
@@ -59,15 +59,34 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         </Section>
 
         <Section title="Views">
-          <Item keys="Settings → View">
-            switches projection. <b>Force</b> is the server's own 3D layout.{" "}
-            <b>Sphere</b> wraps the hierarchy onto a globe (root at the pole),{" "}
-            <b>Cone</b> stacks its rings by depth, and <b>Tree</b> is a flat tidy
-            tree that reads top-to-bottom or left-to-right.
+          <Item keys="The projection button">
+            in the toolbar cycles four views; its icon shows the current one.
+            Settings → View has the same choice plus each view's own controls.
+          </Item>
+          <Item keys="Web">
+            is the server's own force-directed 3D layout — the default.
+          </Item>
+          <Item keys="Sphere / Cone">
+            are nested: every container becomes its own cluster and its children
+            cluster inside that, so a folder reads as a sphere of files rather
+            than scattered points. Cone hangs each cluster below its parent.
+          </Item>
+          <Item keys="Tree">
+            grows the hierarchy as a branching 3D tree. A folder whose contents
+            are all leaves becomes a terminal cluster — a flat rosette, a ball on
+            the tip, or an open spray, mixed per cluster unless you pin one shape.
+          </Item>
+          <Item keys="Framing">
+            resets whenever you switch projection. The alternate views are built
+            from node spacing, not from a fixed box, so each one has its own size.
           </Item>
           <Item keys="Nodes">
             in the toolbar sets how many nodes to load; edges between loaded
             nodes follow automatically.
+          </Item>
+          <Item keys="Theme">
+            switches at the top right. The graph is drawn differently in each:
+            glow and bloom on dark, ink and composited links on light.
           </Item>
         </Section>
 
@@ -94,7 +113,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
           <Item keys="status:">
             filters by dead-code status (<code className="text-primary/80">status:dead</code>).
           </Item>
-          <p className="text-[11px] text-foreground/35 mt-1.5 leading-relaxed">
+          <p className="text-[11px] text-ink-dim mt-1.5 leading-relaxed">
             Terms combine — every space-separated term must match.
           </p>
         </Section>
@@ -113,7 +132,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
-      <h3 className="text-[11px] font-medium text-foreground/40 uppercase tracking-wider mb-1.5">
+      <h3 className="text-[11px] font-medium text-ink-soft uppercase tracking-wider mb-1.5">
         {title}
       </h3>
       <ul className="space-y-1">{children}</ul>

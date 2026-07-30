@@ -88,11 +88,11 @@ function TreeItem({ dir, depth, onSelect, selectedPath, project }: {
           }`}
           style={{ paddingLeft: `${depth * 16 + 12}px` }}
         >
-          <span className="text-foreground/20 w-3 text-center text-[10px] shrink-0">
+          <span className="text-ink-faint w-3 text-center text-[10px] shrink-0">
             {(dir.children.size > 0 || dir.directNodes.length > 0) ? (expanded ? "▾" : "▸") : ""}
           </span>
           <span className="truncate font-medium">{dir.name}</span>
-          <span className="text-foreground/15 ml-auto text-[10px] tabular-nums shrink-0">{dir.nodeIds.size}</span>
+          <span className="text-ink-faint ml-auto text-[10px] tabular-nums shrink-0">{dir.nodeIds.size}</span>
         </button>
         {/* Folder rows open the directory itself. */}
         <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
@@ -108,12 +108,12 @@ function TreeItem({ dir, depth, onSelect, selectedPath, project }: {
             <div key={gn.id} className="group flex items-center gap-1 pr-2 hover:bg-foreground/[0.02] transition-colors">
               <button
                 onClick={() => onSelect(dir.fullPath + "/" + gn.name, new Set([gn.id]))}
-                className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-[3px] text-[11px] text-foreground/40 hover:text-foreground/60"
+                className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-[3px] text-[11px] text-ink-soft hover:text-foreground/60"
                 style={{ paddingLeft: `${(depth+1) * 16 + 12}px` }}
               >
                 <span className="w-[5px] h-[5px] rounded-full shrink-0" style={{ backgroundColor: gn.color }} />
                 <span className="truncate font-mono">{gn.name}</span>
-                <span className="text-foreground/10 ml-auto text-[10px] shrink-0">{gn.label}</span>
+                <span className="text-ink-faint ml-auto text-[10px] shrink-0">{gn.label}</span>
               </button>
               <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                 <OpenButtons project={project} path={gn.file_path} compact />
@@ -158,7 +158,7 @@ export function Sidebar({ nodes, onSelectPath, selectedPath, project }: SidebarP
         <div className="py-1">
           {filtered ? (
             filtered.length === 0 ? (
-              <p className="text-foreground/20 text-[12px] px-4 py-6 text-center">
+              <p className="text-ink-faint text-[12px] px-4 py-6 text-center">
                 {t.common.noMatches}
               </p>
             ) : (
@@ -170,7 +170,7 @@ export function Sidebar({ nodes, onSelectPath, selectedPath, project }: SidebarP
                   >
                     <span className="w-[5px] h-[5px] rounded-full shrink-0" style={{ backgroundColor: n.color }} />
                     <span className="text-foreground/60 truncate">{n.name}</span>
-                    <span className="text-foreground/15 ml-auto text-[10px] font-mono truncate max-w-[100px]">{n.file_path}</span>
+                    <span className="text-ink-faint ml-auto text-[10px] font-mono truncate max-w-[100px]">{n.file_path}</span>
                   </button>
                   <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                     <OpenButtons project={project} path={n.file_path} compact />
@@ -190,7 +190,7 @@ export function Sidebar({ nodes, onSelectPath, selectedPath, project }: SidebarP
         <div className="px-3 py-2 border-t border-border/30">
           <button
             onClick={() => onSelectPath("", new Set())}
-            className="w-full px-3 py-1.5 rounded-lg bg-foreground/[0.04] hover:bg-foreground/[0.07] text-[11px] text-foreground/40 font-medium transition-all"
+            className="w-full px-3 py-1.5 rounded-lg bg-foreground/[0.04] hover:bg-foreground/[0.07] text-[11px] text-ink-soft font-medium transition-all"
           >
             {t.graph.clearSelection}
           </button>

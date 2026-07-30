@@ -6,8 +6,30 @@ import {
   computeReferenceForks,
   DEFAULT_LAYOUT_PARAMS,
   deriveHierarchy,
+  sampleSpacing,
 } from "./viewLayout";
 import type { GraphEdge, GraphNode } from "./types";
+
+const PROJECTIONS = ["sphere", "cone", "tree"] as const;
+
+/* Median nearest-neighbour distance. The single number that decides whether a
+ * projection is usable: node spheres are drawn at a radius comparable to the
+ * layout's own spacing, so a layout that halves the spacing buries every node
+ * inside its neighbour however tidy its aspect ratio looks. */
+function medianSpacing(nodes: GraphNode[]): number {
+  const ds: number[] = [];
+  for (const p of nodes) {
+    let best = Infinity;
+    for (const q of nodes) {
+      if (q === p) continue;
+      const d = (p.x - q.x) ** 2 + (p.y - q.y) ** 2 + (p.z - q.z) ** 2;
+      if (d < best) best = d;
+    }
+    if (best < Infinity) ds.push(Math.sqrt(best));
+  }
+  ds.sort((a, b) => a - b);
+  return ds[Math.floor(ds.length / 2)];
+}
 
 function n(id: number, name: string, file_path?: string): GraphNode {
   return {
@@ -129,7 +151,7 @@ describe("applyViewMode", () => {
   });
 
   it("spreads nodes out in every projection", () => {
-    for (const mode of ["sphere", "cone", "tree"] as const) {
+    for (const mode of PROJECTIONS) {
       const out = applyViewMode(edgeNodes, containment, mode, DEFAULT_LAYOUT_PARAMS);
       const distinct = new Set(out.map((x) => `${x.x.toFixed(2)},${x.y.toFixed(2)},${x.z.toFixed(2)}`));
       expect(distinct.size, mode).toBe(out.length);
@@ -137,23 +159,27 @@ describe("applyViewMode", () => {
     }
   });
 
-  it("flattens the tree view to a plane", () => {
-    const out = applyViewMode(edgeNodes, containment, "tree", DEFAULT_LAYOUT_PARAMS);
-    expect(out.every((x) => Math.abs(x.z) < 1e-9)).toBe(true);
+  it("gives the organic tree real depth instead of flattening it", () => {
+    /* The tidy tree it replaced was pinned to z=0, which is precisely why it
+     * could not survive a wide corpus: 45k leaf rows and nowhere to put them but
+     * one axis. The third dimension is where the breadth goes. */
+    const { ns, es } = wide(40, 4);
+    const out = applyViewMode(ns, es, "tree", DEFAULT_LAYOUT_PARAMS);
+    const zs = out.map((x) => x.z);
+    expect(Math.max(...zs) - Math.min(...zs)).toBeGreaterThan(0);
   });
 
-  it("scales the sphere with its parameter", () => {
-    const small = applyViewMode(edgeNodes, containment, "sphere", {
-      ...DEFAULT_LAYOUT_PARAMS,
-      sphereScale: 0.5,
-    });
-    const big = applyViewMode(edgeNodes, containment, "sphere", {
-      ...DEFAULT_LAYOUT_PARAMS,
-      sphereScale: 2,
-    });
-    const spread = (ns: GraphNode[]) =>
-      Math.max(...ns.map((x) => Math.hypot(x.x, x.y, x.z)));
-    expect(spread(big)).toBeGreaterThan(spread(small));
+  it("scales every projection with the spread parameter", () => {
+    for (const mode of PROJECTIONS) {
+      const at = (spread: number) =>
+        Math.max(
+          ...applyViewMode(edgeNodes, containment, mode, {
+            ...DEFAULT_LAYOUT_PARAMS,
+            spread,
+          }).map((x) => Math.hypot(x.x, x.y, x.z)),
+        );
+      expect(at(2), mode).toBeGreaterThan(at(0.5));
+    }
   });
 
   it("separates nodes that share one slot", () => {
@@ -164,90 +190,203 @@ describe("applyViewMode", () => {
   });
 });
 
+/* A wide, shallow corpus — the shape that broke every projection. p4 is ~47k
+ * nodes over 8 depths, so tens of thousands of siblings share one level. */
+function wide(files: number, perFile: number) {
+  const ns: GraphNode[] = [n(1, "root", "root")];
+  const es: GraphEdge[] = [];
+  let id = 2;
+  for (let f = 0; f < files; f++) {
+    const file = id++;
+    ns.push(n(file, `f${f}.c`, `root/f${f}.c`));
+    es.push({ source: 1, target: file, type: "CONTAINS_FILE" });
+    for (let sym = 0; sym < perFile; sym++) {
+      const s2 = id++;
+      ns.push(n(s2, `fn${f}_${sym}`, `root/f${f}.c`));
+      es.push({ source: file, target: s2, type: "DEFINES" });
+    }
+  }
+  /* Give the input a definite spacing for the projections to inherit. */
+  let seed = 7;
+  for (const node of ns) {
+    for (const axis of ["x", "y", "z"] as const) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      node[axis] = (seed / 0x7fffffff - 0.5) * 1000;
+    }
+  }
+  return { ns, es };
+}
+
+function spans(ns: GraphNode[]) {
+  const xs = ns.map((v) => v.x);
+  const ys = ns.map((v) => v.y);
+  const zs = ns.map((v) => v.z);
+  return [
+    Math.max(...xs) - Math.min(...xs),
+    Math.max(...ys) - Math.min(...ys),
+    Math.max(...zs) - Math.min(...zs),
+  ];
+}
+
 describe("layout proportions at scale", () => {
-  /* A wide, shallow corpus — the shape that broke every projection. p4 is ~47k
-   * nodes over 4-8 depths, so tens of thousands of siblings share one level. */
-  function wide(files: number, perFile: number) {
-    const ns: GraphNode[] = [n(1, "root", "root")];
-    const es: GraphEdge[] = [];
-    let id = 2;
-    for (let f = 0; f < files; f++) {
-      const file = id++;
-      ns.push(n(file, `f${f}.c`, `root/f${f}.c`));
-      es.push({ source: 1, target: file, type: "CONTAINS_FILE" });
-      for (let s = 0; s < perFile; s++) {
-        const sym = id++;
-        ns.push(n(sym, `fn${f}_${s}`, `root/f${f}.c`));
-        es.push({ source: file, target: sym, type: "DEFINES" });
-      }
-    }
-    /* Give the input a definite extent for fitToExtent to match. */
-    let seed = 7;
-    for (const node of ns) {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      node.x = (seed / 0x7fffffff - 0.5) * 1000;
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      node.y = (seed / 0x7fffffff - 0.5) * 1000;
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      node.z = (seed / 0x7fffffff - 0.5) * 1000;
-    }
-    return { ns, es };
-  }
-
-  function spans(ns: GraphNode[]) {
-    const xs = ns.map((v) => v.x);
-    const ys = ns.map((v) => v.y);
-    const zs = ns.map((v) => v.z);
-    return [
-      Math.max(...xs) - Math.min(...xs),
-      Math.max(...ys) - Math.min(...ys),
-      Math.max(...zs) - Math.min(...zs),
-    ];
-  }
-
   it("keeps every projection within a sane aspect ratio on a wide corpus", () => {
     /* The tidy tree used a fixed 18-unit row gap, so 47k leaves made it 846,000
      * units tall against 1,520 wide — 557:1, which rendered as a vertical line. */
-    const { ns, es } = wide(700, 12);
-    for (const mode of ["sphere", "cone", "tree"] as const) {
+    const { ns, es } = wide(150, 8);
+    for (const mode of PROJECTIONS) {
       const out = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
-      const nonZero = spans(out).filter((s) => s > 1e-6);
+      const nonZero = spans(out).filter((v) => v > 1e-6);
       const aspect = Math.max(...nonZero) / Math.min(...nonZero);
       expect(aspect, `${mode} aspect ratio`).toBeLessThan(6);
     }
   });
 
-  it("matches the extent the camera is already framed for", () => {
-    /* A projection sized from depth alone landed at a different scale than the
-     * server layout, so switching view showed a speck or a clipped mess. */
-    const { ns, es } = wide(300, 8);
-    const before = Math.max(...spans(ns));
-    for (const mode of ["sphere", "cone", "tree"] as const) {
+  it("preserves the source layout's node spacing", () => {
+    /* THE regression that mattered, and the one a correct aspect ratio hid. Every
+     * projection previously passed the aspect check while packing nodes 3–90×
+     * tighter than the layout they came from — because they were scaled to match
+     * the source's outer *extent*, and a force layout fills its volume where a
+     * projection piles onto shells. Density is what has to transfer. */
+    const { ns, es } = wide(120, 6);
+    const target = sampleSpacing(ns);
+    for (const mode of PROJECTIONS) {
       const out = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
-      const after = Math.max(...spans(out));
-      expect(after / before, `${mode} extent ratio`).toBeGreaterThan(0.5);
-      expect(after / before, `${mode} extent ratio`).toBeLessThan(3);
+      const got = medianSpacing(out);
+      expect(got / target, `${mode} spacing ratio`).toBeGreaterThan(0.6);
+      expect(got / target, `${mode} spacing ratio`).toBeLessThan(1.8);
     }
   });
 
-  it("spreads a depth level into a band instead of one circle", () => {
-    /* Latitude straight from an integer depth put thousands of nodes on a
-     * razor-thin ring; they overlapped into a wireframe. Siblings must occupy
-     * distinct distances from the sphere's axis. */
-    const { ns, es } = wide(200, 10);
-    const out = applyViewMode(ns, es, "sphere", DEFAULT_LAYOUT_PARAMS);
+  it("stays inside a usable camera range", () => {
+    /* Reserving a bounding sphere per child compounded by √n at every level and
+     * produced a cone 325,000,000 units across and a tree of 1.7e9 — geometrically
+     * valid, entirely outside the far plane. */
+    const { ns, es } = wide(120, 6);
+    for (const mode of PROJECTIONS) {
+      const out = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
+      expect(Math.max(...spans(out)), `${mode} extent`).toBeLessThan(100_000);
+    }
+  });
+
+  it("nests children inside their own parent's cluster", () => {
+    /* The sub-clustering ask: a folder should read as its own sphere/cone, not as
+     * scattered points on one global shell. Siblings must therefore sit closer to
+     * each other than two nodes drawn from different parents. */
+    const { ns, es } = wide(30, 8);
+    for (const mode of PROJECTIONS) {
+      const out = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
+      const by = new Map(out.map((v) => [v.id, v]));
+      const h = deriveHierarchy(ns, es);
+      const groups = new Map<number, GraphNode[]>();
+      for (const node of ns) {
+        const slot = h.slotOf.get(node.id);
+        const parent = slot?.parent;
+        if (!parent) continue;
+        /* Key on the parent slot's first node id — the file each symbol sits in. */
+        const key = parent.ids[0];
+        if (key === undefined) continue;
+        const list = groups.get(key);
+        if (list) list.push(by.get(node.id)!);
+        else groups.set(key, [by.get(node.id)!]);
+      }
+      const families = [...groups.values()].filter((g) => g.length > 2).slice(0, 6);
+      expect(families.length, `${mode} families`).toBeGreaterThan(1);
+
+      const within = (g: GraphNode[]) => {
+        let sum = 0, count = 0;
+        for (let i = 0; i < g.length; i++) {
+          for (let j = i + 1; j < g.length; j++) {
+            sum += Math.hypot(g[i].x - g[j].x, g[i].y - g[j].y, g[i].z - g[j].z);
+            count++;
+          }
+        }
+        return sum / count;
+      };
+      const across = (a: GraphNode[], b: GraphNode[]) =>
+        Math.hypot(a[0].x - b[0].x, a[0].y - b[0].y, a[0].z - b[0].z);
+
+      const meanWithin =
+        families.reduce((acc, g) => acc + within(g), 0) / families.length;
+      let sum = 0, count = 0;
+      for (let i = 0; i < families.length; i++) {
+        for (let j = i + 1; j < families.length; j++) {
+          sum += across(families[i], families[j]);
+          count++;
+        }
+      }
+      expect(meanWithin, `${mode} clustering`).toBeLessThan(sum / count);
+    }
+  });
+
+  it("is deterministic — the same graph projects identically twice", () => {
+    /* Cluster shapes and phases are hash-derived rather than random, so toggling a
+     * filter cannot reshuffle the whole map. */
+    const { ns, es } = wide(20, 5);
+    for (const mode of PROJECTIONS) {
+      const a = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
+      const b = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
+      expect(a.map((v) => `${v.x},${v.y},${v.z}`), mode).toEqual(
+        b.map((v) => `${v.x},${v.y},${v.z}`),
+      );
+    }
+  });
+});
+
+describe("organic tree leaf clusters", () => {
+  /* A file's symbols are an all-leaf cluster, which is what gets a shape. */
+  function leafCluster(files = 6, perFile = 14) {
+    return wide(files, perFile);
+  }
+
+  it("lays a flower out as a flat rosette", () => {
+    const { ns, es } = leafCluster();
+    const out = applyViewMode(ns, es, "tree", {
+      ...DEFAULT_LAYOUT_PARAMS,
+      leafShape: "flower",
+    });
     const h = deriveHierarchy(ns, es);
-    const byId = new Map(out.map((v) => [v.id, v]));
-    const deepest = [...h.slotOf.entries()].filter(
-      ([, s]) => s.depth === h.maxDepth,
-    );
-    const radii = new Set(
-      deepest.map(([id]) => {
-        const v = byId.get(id)!;
-        return Math.hypot(v.x, v.z).toFixed(1);
-      }),
-    );
-    expect(radii.size).toBeGreaterThan(5);
+    const by = new Map(out.map((v) => [v.id, v]));
+    /* Group the leaves of one file and check they are close to coplanar: the
+     * thinnest principal spread should be far smaller than the widest. */
+    const file = ns.find((v) => v.name === "f0.c")!;
+    const slot = h.slotOf.get(file.id)!;
+    const petals = slot.children.map((c) => by.get(c.ids[0])!).filter(Boolean);
+    expect(petals.length).toBeGreaterThan(6);
+
+    const cx = petals.reduce((a, v) => a + v.x, 0) / petals.length;
+    const cy = petals.reduce((a, v) => a + v.y, 0) / petals.length;
+    const cz = petals.reduce((a, v) => a + v.z, 0) / petals.length;
+    /* Radius vs the RMS distance from the best-fit plane, approximated by the
+     * smallest axis-aligned spread after centring. */
+    const spreadOf = (f: (v: GraphNode) => number) =>
+      Math.sqrt(petals.reduce((a, v) => a + f(v) ** 2, 0) / petals.length);
+    const sx = spreadOf((v) => v.x - cx);
+    const sy = spreadOf((v) => v.y - cy);
+    const sz = spreadOf((v) => v.z - cz);
+    const thin = Math.min(sx, sy, sz);
+    const wide_ = Math.max(sx, sy, sz);
+    expect(thin / wide_).toBeLessThan(0.6);
+  });
+
+  it("gives a bulb genuine volume in all three axes", () => {
+    const { ns, es } = leafCluster();
+    const out = applyViewMode(ns, es, "tree", {
+      ...DEFAULT_LAYOUT_PARAMS,
+      leafShape: "bulb",
+    });
+    const nonZero = spans(out).filter((v) => v > 1e-6);
+    expect(nonZero).toHaveLength(3);
+  });
+
+  it("produces a mix of shapes on auto and one shape when pinned", () => {
+    const { ns, es } = leafCluster(24, 12);
+    const auto = applyViewMode(ns, es, "tree", DEFAULT_LAYOUT_PARAMS);
+    const pinned = applyViewMode(ns, es, "tree", {
+      ...DEFAULT_LAYOUT_PARAMS,
+      leafShape: "bulb",
+    });
+    const key = (a: GraphNode[]) => a.map((v) => v.x.toFixed(3)).join(",");
+    expect(key(auto)).not.toEqual(key(pinned));
   });
 });
 

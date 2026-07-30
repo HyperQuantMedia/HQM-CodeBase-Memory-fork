@@ -7,7 +7,21 @@
  * theme switching impossible — redefining --color-background later cannot reach
  * a utility that no longer references it. Plain `@theme` emits
  * `.bg-background{background-color:var(--color-background)}`, so the light
- * overrides further down re-theme every utility with no component changes. */
+ * overrides further down re-theme every utility with no component changes.
+ *
+ * Two families of token live here:
+ *
+ *   1. shadcn's role names (background / card / primary / …), which most
+ *      components already speak.
+ *   2. Cartograph's own surface + ink roles (surface-1..3, panel, code, scrim,
+ *      hairline, info, warning). These exist because the first light-mode pass
+ *      failed for a reason no palette edit could fix: ~55 places wrote their own
+ *      ink as `bg-white/[0.02]`, `text-white/30`, `bg-black/40`,
+ *      `bg-[#0b1920]`, `text-cyan-300/60`. Every one of those is correct on a
+ *      near-black background and *invisible or inverted* on a near-white one —
+ *      white-on-white tints, white text on paper, and a detail panel that stayed
+ *      dark while the rest of the app went light. A theme cannot reach a literal,
+ *      so the literals had to become roles. */
 @theme {
   --color-background: #07071a;
   --color-foreground: #eef1ff;
@@ -31,89 +45,151 @@
   --radius: 0.75rem;
   --color-sidebar: #0b0c22;
   --color-canvas: #06090f;
+
+  /* Raised tints, in increasing strength: resting fill, hover, active. On dark
+   * these lift toward light; the light theme inverts them to sink toward ink. */
+  --color-surface-1: #ffffff0a;
+  --color-surface-2: #ffffff14;
+  --color-surface-3: #ffffff1f;
+  /* Floating chrome that is its own surface rather than a tint: the node detail
+   * panel, tooltips, modal bodies. */
+  --color-panel: #0b1920;
+  /* Code / preformatted blocks — deliberately deeper than the panel. */
+  --color-code: #00000066;
+  /* Modal backdrop. */
+  --color-scrim: #000000a6;
+  /* Divider inside an already-bordered surface. */
+  --color-hairline: #ffffff1f;
+  /* Informational accent (counts, live values). Cyan on dark, teal on light. */
+  --color-info: #67e8f9;
+  /* Advisory notice (the node-budget cap message). */
+  --color-warning: #fcd34d;
+
+  /* De-emphasised ink, three steps down from `foreground`.
+   *
+   * These exist because `text-foreground/20` cannot be themed. Tailwind compiles
+   * an opacity modifier to color-mix(… , transparent), i.e. real alpha — so the
+   * same utility that reads as a soft grey when the ink is near-white on
+   * near-black reads as nothing at all when the ink is near-black on paper. 70
+   * call sites sat at /30 or below and every one of them vanished in light mode.
+   * Naming the three tiers lets each theme pick its own alpha: light needs
+   * roughly double, because dark text on white loses legibility far faster than
+   * light text on black. */
+  --color-ink-faint: #eef1ff45;
+  --color-ink-dim: #eef1ff70;
+  --color-ink-soft: #eef1ffab;
+
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-/* Light theme — daylight-sky counterpart of the celestial palette. Same role
- * mapping, inverted values; the north-star gold deepens to amber so it stays
- * legible as an accent on white. Declared in two places so the page follows the
- * OS by default and an explicit choice always wins:
- *   1. the media query, scoped with :where() so it never beats data-theme
- *   2. the [data-theme="light"] attribute the toggle sets
- * `@theme inline` means every bg-background / text-foreground utility resolves
- * through var(--color-*), so redefining the vars re-themes the whole app with
- * no component changes. */
-/* Light theme — the celestial palette at daybreak: same role mapping, cool
- * paper-white surfaces, and the north-star gold deepened to a bronze that
- * actually passes contrast on white (the dark theme's #ffce6e reads as
- * illegible pale yellow there).
+/* Light theme — the celestial palette at daybreak.
  *
- * Borders carry real opacity here. Semi-transparent hairlines that work against
+ * Same role mapping, cool paper surfaces, and the north-star gold deepened to
+ * amber. #ffce6e is a pale yellow that fails contrast on white in every role
+ * (button fill, ring, active tab); #a35a00 keeps the warm identity and clears
+ * 4.5:1 against both white text on a filled button and a white background as
+ * accent text.
+ *
+ * Borders carry real opacity here. Semi-transparent hairlines tuned against
  * near-black disappear entirely against near-white, which is what made the
- * first attempt look unfinished — panel edges simply vanished.
+ * panels read as unfinished — their edges simply vanished.
  *
  * Declared twice on purpose: the media query (scoped with :where() so it can
  * never outrank an explicit choice) follows the OS by default, and the
- * [data-theme] attribute wins once the user picks. */
+ * [data-theme] attribute wins once the user picks. The two blocks are identical
+ * by hand; CSS has no way to share a declaration list across selectors without
+ * a preprocessor, and a shared var indirection would break the media query's
+ * :where() specificity trick. */
 @media (prefers-color-scheme: light) {
   :root:where(:not([data-theme="dark"])) {
     color-scheme: light;
-    --color-background: #f4f5fa;
-    --color-foreground: #1a1c33;
+    --color-background: #f5f6fa;
+    --color-foreground: #14172b;
     --color-card: #ffffff;
-    --color-card-foreground: #1a1c33;
+    --color-card-foreground: #14172b;
     --color-popover: #ffffff;
-    --color-popover-foreground: #1a1c33;
-    --color-primary: #8a5200;
-    --color-primary-foreground: #fffdf7;
-    --color-secondary: #e9ebf4;
-    --color-secondary-foreground: #363b57;
-    --color-muted: #e9ebf4;
-    --color-muted-foreground: #565b7a;
-    --color-accent: #dde1ef;
-    --color-accent-foreground: #1a1c33;
-    --color-destructive: #b42222;
-    --color-destructive-foreground: #fffdf7;
-    --color-border: #c3c8de;
+    --color-popover-foreground: #14172b;
+    --color-primary: #a35a00;
+    --color-primary-foreground: #fffaf2;
+    --color-secondary: #e7eaf3;
+    --color-secondary-foreground: #2c3149;
+    --color-muted: #eceff7;
+    --color-muted-foreground: #545a76;
+    --color-accent: #dfe4f1;
+    --color-accent-foreground: #14172b;
+    --color-destructive: #b3261e;
+    --color-destructive-foreground: #fffaf2;
+    --color-border: #ccd3e4;
     --color-input: #ffffff;
-    --color-ring: #8a5200;
-    --color-sidebar: #eceef6;
-    --color-canvas: #e8ebf4;
+    --color-ring: #a35a00;
+    --color-sidebar: #eef0f7;
+    --color-canvas: #f2f4fa;
+    --color-surface-1: #14172b0a;
+    --color-surface-2: #14172b14;
+    --color-surface-3: #14172b1f;
+    --color-panel: #ffffff;
+    --color-code: #eef1f8;
+    --color-scrim: #14172b73;
+    --color-hairline: #14172b1f;
+    --color-info: #0e7490;
+    --color-warning: #92580a;
+    --color-ink-faint: #14172b70;
+    --color-ink-dim: #14172b9e;
+    --color-ink-soft: #14172bcc;
   }
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --color-background: #f4f5fa;
-  --color-foreground: #1a1c33;
+  --color-background: #f5f6fa;
+  --color-foreground: #14172b;
   --color-card: #ffffff;
-  --color-card-foreground: #1a1c33;
+  --color-card-foreground: #14172b;
   --color-popover: #ffffff;
-  --color-popover-foreground: #1a1c33;
-  --color-primary: #8a5200;
-  --color-primary-foreground: #fffdf7;
-  --color-secondary: #e9ebf4;
-  --color-secondary-foreground: #363b57;
-  --color-muted: #e9ebf4;
-  --color-muted-foreground: #565b7a;
-  --color-accent: #dde1ef;
-  --color-accent-foreground: #1a1c33;
-  --color-destructive: #b42222;
-  --color-destructive-foreground: #fffdf7;
-  --color-border: #c3c8de;
+  --color-popover-foreground: #14172b;
+  --color-primary: #a35a00;
+  --color-primary-foreground: #fffaf2;
+  --color-secondary: #e7eaf3;
+  --color-secondary-foreground: #2c3149;
+  --color-muted: #eceff7;
+  --color-muted-foreground: #545a76;
+  --color-accent: #dfe4f1;
+  --color-accent-foreground: #14172b;
+  --color-destructive: #b3261e;
+  --color-destructive-foreground: #fffaf2;
+  --color-border: #ccd3e4;
   --color-input: #ffffff;
-  --color-ring: #8a5200;
-  --color-sidebar: #eceef6;
-  --color-canvas: #e8ebf4;
+  --color-ring: #a35a00;
+  --color-sidebar: #eef0f7;
+  --color-canvas: #f2f4fa;
+  --color-surface-1: #14172b0a;
+  --color-surface-2: #14172b14;
+  --color-surface-3: #14172b1f;
+  --color-panel: #ffffff;
+  --color-code: #eef1f8;
+  --color-scrim: #14172b73;
+  --color-hairline: #14172b1f;
+  --color-info: #0e7490;
+  --color-warning: #92580a;
+  --color-ink-faint: #14172b70;
+  --color-ink-dim: #14172b9e;
+  --color-ink-soft: #14172bcc;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 }
 
-/* The graph's own ink. Node and edge colours come from the data, but the label
- * text and the loader are ours to theme. */
+/* Native form controls (checkbox ticks, range tracks, select popups, the colour
+ * swatch chrome) are painted by the browser from color-scheme, not from our
+ * tokens — without this a light page keeps rendering dark-scheme controls. */
+html {
+  accent-color: var(--color-primary);
+}
+
+/* The graph loader's ink. Node and edge colours come from the data; the loader
+ * is ours to theme. */
 .graph-loader-node,
 .graph-loader-edge {
   --loader-ink: #22d3ee;
@@ -175,3 +251,5 @@ html, body, #root {
   .graph-loader-node { opacity: 0.8; }
   .graph-loader-edge { stroke-dashoffset: 0; stroke-opacity: 0.35; }
 }
+</content>
+</invoke>

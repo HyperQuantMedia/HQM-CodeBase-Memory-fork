@@ -207,7 +207,39 @@ describe("settings tabs", () => {
     expect(screen.getByLabelText("Document color")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Animation" }));
-    expect(screen.getByLabelText("Path light color")).toBeInTheDocument();
+    expect(screen.getByLabelText("Light color")).toBeInTheDocument();
+  });
+
+  it("offers colour presets once the light is set to a fixed colour", () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    return screen.findByText("Filters").then(() => {
+      fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+      fireEvent.click(screen.getByRole("tab", { name: "Animation" }));
+
+      /* Default is "follow the strand", where a fixed colour would be ignored —
+       * so the picker and its presets stay hidden until the mode calls for one. */
+      expect(screen.queryByLabelText("Path light color")).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Light color"), {
+        target: { value: "custom" },
+      });
+      expect(screen.getByLabelText("Path light color")).toBeInTheDocument();
+      expect(screen.getByLabelText("North star")).toBeInTheDocument();
+      expect(screen.getByLabelText("Emerald")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps per-level acceleration off unless asked", () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    return screen.findByText("Filters").then(() => {
+      fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+      fireEvent.click(screen.getByRole("tab", { name: "Animation" }));
+      const toggle = screen.getByRole("button", { name: /Accelerate per level/ });
+      /* CheckRow marks its checked state with the primary colour. */
+      expect(toggle.className).toContain("text-ink-soft");
+    });
   });
 });
 

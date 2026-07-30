@@ -3,6 +3,7 @@ import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { GraphNode } from "../lib/types";
 import { nodeGlowBoost } from "../lib/density";
+import { inkNode, type Stage } from "../lib/sceneInk";
 
 interface NodeCloudProps {
   nodes: GraphNode[];
@@ -13,6 +14,8 @@ interface NodeCloudProps {
   /* Multiplier on the per-node glow boost. 1 = full boost (sparse graphs),
    * 0 = flat colors (dense graphs). Adaptive default × user setting. */
   boost?: number;
+  /* Emission on darkness vs ink on paper — see lib/sceneInk.ts. */
+  stage?: Stage;
 }
 
 /* Above this count instanced spheres stop paying off (vertex + matrix cost)
@@ -33,9 +36,26 @@ function nodeColor(
   opacity: number,
   boost: number,
   tempColor: THREE.Color,
+  stage: Stage = "dark",
 ): [number, number, number] {
   const hasHighlight = highlightedIds && highlightedIds.size > 0;
   tempColor.set(node.color);
+
+  /* Light stage: darken and saturate rather than boost. The stellar palette is
+   * pale blue / white / pale yellow, which on paper is paper — and with no bloom
+   * pass an over-1.0 colour has nowhere to go anyway. Dimming a non-highlighted
+   * node also has to fade it *toward the background* here rather than toward
+   * black, or the nodes meant to recede become the darkest marks on screen. */
+  if (stage === "light") {
+    const [lr, lg, lb] = inkNode(tempColor.r, tempColor.g, tempColor.b);
+    const dim = hasHighlight && !highlightedIds.has(node.id) ? 0.22 : 1;
+    return [
+      (1 - (1 - lr) * dim) * opacity,
+      (1 - (1 - lg) * dim) * opacity,
+      (1 - (1 - lb) * dim) * opacity,
+    ];
+  }
+
   if (hasHighlight && !highlightedIds.has(node.id)) {
     tempColor.multiplyScalar(0.15);
   } else {
@@ -81,6 +101,7 @@ function NodePoints({
   onClick,
   opacity,
   boost,
+  stage,
 }: Required<NodeCloudProps>) {
   const { raycaster } = useThree();
 
@@ -102,13 +123,20 @@ function NodePoints({
       positions[i * 3] = n.x;
       positions[i * 3 + 1] = n.y;
       positions[i * 3 + 2] = n.z;
-      const [r, g, b] = nodeColor(n, highlightedIds, opacity, boost, tempColor);
+      const [r, g, b] = nodeColor(
+        n,
+        highlightedIds,
+        opacity,
+        boost,
+        tempColor,
+        stage,
+      );
       colors[i * 3] = r;
       colors[i * 3 + 1] = g;
       colors[i * 3 + 2] = b;
     }
     return { positions, colors };
-  }, [nodes, highlightedIds, opacity, boost]);
+  }, [nodes, highlightedIds, opacity, boost, stage]);
 
   return (
     <points
@@ -154,6 +182,7 @@ function NodeSpheres({
   onClick,
   opacity,
   boost,
+  stage,
 }: Required<NodeCloudProps>) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const tempObj = useMemo(() => new THREE.Object3D(), []);
@@ -170,13 +199,14 @@ function NodeSpheres({
         opacity,
         boost,
         tempColor,
+        stage,
       );
       arr[i * 3] = r;
       arr[i * 3 + 1] = g;
       arr[i * 3 + 2] = b;
     }
     return arr;
-  }, [nodes, highlightedIds, tempColor, opacity, boost]);
+  }, [nodes, highlightedIds, tempColor, opacity, boost, stage]);
 
   /* Node positions are static (the layout is server-computed), so instance
    * matrices only change with the node set or the highlight — never rebuild
@@ -237,6 +267,7 @@ export function NodeCloud({
   onClick,
   opacity = 1.0,
   boost = 1.0,
+  stage = "dark",
 }: NodeCloudProps) {
   if (nodes.length > POINT_MODE_THRESHOLD) {
     return (
@@ -247,6 +278,7 @@ export function NodeCloud({
         onClick={onClick}
         opacity={opacity}
         boost={boost}
+        stage={stage}
       />
     );
   }
@@ -258,6 +290,7 @@ export function NodeCloud({
       onClick={onClick}
       opacity={opacity}
       boost={boost}
+      stage={stage}
     />
   );
 }

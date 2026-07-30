@@ -41,7 +41,7 @@ function CheckRow({
     <button
       onClick={onToggle}
       className={`flex items-center gap-1.5 text-[11px] font-medium transition-all ${
-        checked ? "text-primary" : "text-foreground/40"
+        checked ? "text-primary" : "text-ink-soft"
       }`}
     >
       <span
@@ -53,7 +53,7 @@ function CheckRow({
       </span>
       {label}
       {count !== undefined && (
-        <span className="text-foreground/25 tabular-nums">{count.toLocaleString()}</span>
+        <span className="text-ink-dim tabular-nums">{count.toLocaleString()}</span>
       )}
     </button>
   );
@@ -107,7 +107,7 @@ export function FilterPanel({
           CollapsibleSection wrapper that GraphTab supplies. */}
       <div className="flex items-center justify-end gap-2 px-4 pb-1.5 shrink-0">
         <button onClick={onEnableAll} className="text-[10px] text-primary/70 hover:text-primary transition-colors">All</button>
-        <span className="text-foreground/15">|</span>
+        <span className="text-ink-faint">|</span>
         <button onClick={onDisableAll} className="text-[10px] text-primary/70 hover:text-primary transition-colors">None</button>
       </div>
 
@@ -117,7 +117,7 @@ export function FilterPanel({
           {/* Node types */}
           {labelCounts.length > 0 && (
             <div>
-              <p className="text-[10px] font-medium text-foreground/40 mb-1.5 uppercase tracking-wider">Node types</p>
+              <p className="text-[10px] font-medium text-ink-soft mb-1.5 uppercase tracking-wider">Node types</p>
               <div className="flex flex-wrap gap-1">
                 {labelCounts.map(([label, count]) => {
                   const on = enabledLabels.has(label);
@@ -132,7 +132,7 @@ export function FilterPanel({
                     >
                       <span className="w-[5px] h-[5px] rounded-full" style={{ backgroundColor: on ? c : "#7b7b7b" }} />
                       <span style={{ color: on ? c : "#8a8a8a" }}>{label}</span>
-                      <span className="text-foreground/20 tabular-nums">{count.toLocaleString()}</span>
+                      <span className="text-ink-faint tabular-nums">{count.toLocaleString()}</span>
                     </button>
                   );
                 })}
@@ -143,7 +143,7 @@ export function FilterPanel({
           {/* Relationships */}
           {edgeTypeCounts.length > 0 && (
             <div>
-              <p className="text-[10px] font-medium text-foreground/40 mb-1.5 uppercase tracking-wider">Relationships</p>
+              <p className="text-[10px] font-medium text-ink-soft mb-1.5 uppercase tracking-wider">Relationships</p>
               <div className="flex flex-wrap gap-1">
                 {edgeTypeCounts.map(([type, count]) => {
                   const on = enabledEdgeTypes.has(type);
@@ -152,11 +152,11 @@ export function FilterPanel({
                       key={type}
                       onClick={() => onToggleEdgeType(type)}
                       className={`inline-flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[10px] font-medium transition-all border ${
-                        on ? "border-border/50 bg-foreground/[0.03] text-foreground/60" : "border-transparent opacity-20 text-foreground/30"
+                        on ? "border-border/50 bg-foreground/[0.03] text-foreground/60" : "border-transparent opacity-20 text-ink-dim"
                       }`}
                     >
                       {type.replace(/_/g, " ").toLowerCase()}
-                      <span className="text-foreground/15 tabular-nums">{count.toLocaleString()}</span>
+                      <span className="text-ink-faint tabular-nums">{count.toLocaleString()}</span>
                     </button>
                   );
                 })}
@@ -202,7 +202,7 @@ export function FilterPanel({
                 {STATUS_LEGEND.map((s) => (
                   <span
                     key={s.status}
-                    className="inline-flex items-center gap-1 text-[9px] text-foreground/40"
+                    className="inline-flex items-center gap-1 text-[9px] text-ink-soft"
                   >
                     <span
                       className="w-[6px] h-[6px] rounded-full"
@@ -222,7 +222,7 @@ export function FilterPanel({
         <button
           onClick={onToggleShowLabels}
           className={`inline-flex items-center gap-1.5 text-[11px] font-medium transition-all ${
-            showLabels ? "text-primary" : "text-foreground/30"
+            showLabels ? "text-primary" : "text-ink-dim"
           }`}
         >
           <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${

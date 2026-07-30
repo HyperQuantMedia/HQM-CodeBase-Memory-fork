@@ -86,19 +86,39 @@ export interface DisplaySettings {
   nodeGlow: number;
   /** Bloom intensity multiplier (0–2, default 1). */
   bloom: number;
+  /** How far each link bows away from a straight chord (0 = straight). */
+  edgeCurve: number;
 }
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   edgeBrightness: 1,
   nodeGlow: 1,
   bloom: 1,
+  /* On by default. Straight chords are what makes a hierarchical projection read
+   * as a wire diagram next to the server's force layout: every link is a taut
+   * radius through the middle. A slight outward bow gives the same graph the
+   * branching, organic look, and costs nothing at rest. */
+  edgeCurve: 0.35,
 };
 
 export const DISPLAY_LIMITS = {
   edgeBrightness: { min: 0.1, max: 3 },
   nodeGlow: { min: 0, max: 2 },
   bloom: { min: 0, max: 2 },
+  edgeCurve: { min: 0, max: 1 },
 } as const;
+
+/* Curving an edge multiplies its vertex count by the subdivision level, so past
+ * this many edges the bow is dropped rather than quietly costing 3M vertices. */
+export const EDGE_CURVE_MAX_EDGES = 60000;
+
+/* Subdivisions per curved edge — enough that a bow reads as a curve, few enough
+ * that a 60k-edge graph stays under a million vertices. */
+export function edgeCurveSegments(edgeCount: number): number {
+  if (edgeCount > EDGE_CURVE_MAX_EDGES) return 1;
+  if (edgeCount > 20000) return 5;
+  return 9;
+}
 
 const DISPLAY_STORAGE_KEY = "cbm-display";
 
@@ -116,6 +136,7 @@ export function clampDisplaySettings(
     edgeBrightness: clampSetting("edgeBrightness", raw.edgeBrightness),
     nodeGlow: clampSetting("nodeGlow", raw.nodeGlow),
     bloom: clampSetting("bloom", raw.bloom),
+    edgeCurve: clampSetting("edgeCurve", raw.edgeCurve),
   };
 }
 

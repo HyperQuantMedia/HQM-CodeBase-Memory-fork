@@ -32,7 +32,7 @@ export function OpenButtons({
   };
 
   const cls = compact
-    ? "flex items-center justify-center w-5 h-5 rounded text-foreground/30 hover:text-primary hover:bg-foreground/[0.06] transition-colors"
+    ? "flex items-center justify-center w-5 h-5 rounded text-ink-dim hover:text-primary hover:bg-foreground/[0.06] transition-colors"
     : "px-2.5 py-1 rounded-md bg-foreground/[0.05] text-foreground/60 text-[11px] font-medium hover:bg-foreground/[0.09] hover:text-foreground/90 transition-colors";
 
   return (

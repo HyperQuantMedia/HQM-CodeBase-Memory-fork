@@ -39,7 +39,7 @@ export function Breadcrumb({ crumbs, root, onSelect }: BreadcrumbProps) {
     >
       <button
         onClick={() => onSelect("", new Set())}
-        className="text-foreground/45 hover:text-primary transition-colors max-w-[180px] truncate"
+        className="text-ink-soft hover:text-primary transition-colors max-w-[180px] truncate"
         title={`${root} — clear the selection`}
       >
         {root}
@@ -48,7 +48,7 @@ export function Breadcrumb({ crumbs, root, onSelect }: BreadcrumbProps) {
         const last = i === crumbs.length - 1;
         return (
           <span key={`${crumb.label}-${i}`} className="flex items-center gap-x-1">
-            <span className="text-foreground/25 select-none" aria-hidden="true">
+            <span className="text-ink-dim select-none" aria-hidden="true">
               /
             </span>
             <button
@@ -56,7 +56,7 @@ export function Breadcrumb({ crumbs, root, onSelect }: BreadcrumbProps) {
               className={`max-w-[220px] truncate transition-colors ${
                 last
                   ? "text-foreground font-medium"
-                  : "text-foreground/55 hover:text-primary"
+                  : "text-ink-soft hover:text-primary"
               }`}
               title={`${crumb.label} — ${crumb.subtreeIds.length.toLocaleString()} node(s)`}
             >

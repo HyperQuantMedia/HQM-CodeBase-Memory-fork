@@ -31,10 +31,10 @@ export function CollapsibleSection({
         <button
           onClick={onToggle}
           aria-expanded={open}
-          className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/50 hover:text-foreground/80 uppercase tracking-widest transition-colors min-w-0"
+          className="flex items-center gap-1.5 text-[11px] font-medium text-ink-soft hover:text-foreground/80 uppercase tracking-widest transition-colors min-w-0"
         >
           <span
-            className={`text-[9px] text-foreground/30 transition-transform ${open ? "" : "-rotate-90"}`}
+            className={`text-[9px] text-ink-dim transition-transform ${open ? "" : "-rotate-90"}`}
             aria-hidden="true"
           >
             ▾

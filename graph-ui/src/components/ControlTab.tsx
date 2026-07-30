@@ -10,12 +10,12 @@ function Gauge({ label, value, max, unit, color }: {
 }) {
   const pct = Math.min(100, (value / max) * 100);
   return (
-    <div className="flex-1 rounded-xl border border-border/30 bg-white/[0.02] p-4">
-      <p className="text-[10px] text-foreground/25 uppercase tracking-widest mb-2">{label}</p>
+    <div className="flex-1 rounded-xl border border-border/30 bg-surface-1 p-4">
+      <p className="text-[10px] text-ink-dim uppercase tracking-widest mb-2">{label}</p>
       <p className={`text-[20px] font-semibold tabular-nums ${color}`}>
-        {value.toFixed(1)}<span className="text-[11px] text-foreground/30 ml-1">{unit}</span>
+        {value.toFixed(1)}<span className="text-[11px] text-ink-dim ml-1">{unit}</span>
       </p>
-      <div className="mt-2 h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
+      <div className="mt-2 h-1.5 rounded-full bg-surface-2 overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-500"
           style={{ width: `${pct}%`, backgroundColor: pct > 80 ? "#e05252" : pct > 50 ? "#eab308" : "#1DA27E" }}
@@ -38,12 +38,12 @@ function ProcessCard({ proc, selected, onSelect, onKill }: {
       className={`w-full text-left rounded-xl border p-4 transition-all ${
         selected
           ? "border-primary/40 bg-primary/5"
-          : "border-border/30 bg-white/[0.02] hover:bg-white/[0.04]"
+          : "border-border/30 bg-surface-1 hover:bg-surface-2"
       }`}
     >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${proc.is_self ? "bg-primary animate-pulse" : "bg-emerald-400"}`} />
+          <span className={`w-2 h-2 rounded-full ${proc.is_self ? "bg-primary animate-pulse" : "bg-emerald-500"}`} />
           <span className="text-[12px] font-semibold text-foreground/80">
             PID {proc.pid}
           </span>
@@ -54,7 +54,7 @@ function ProcessCard({ proc, selected, onSelect, onKill }: {
         {!proc.is_self && (
           <button
             onClick={(e) => { e.stopPropagation(); onKill(); }}
-            className="px-2 py-1 rounded-lg text-[10px] text-foreground/20 hover:text-destructive hover:bg-destructive/10 transition-all"
+            className="px-2 py-1 rounded-lg text-[10px] text-ink-faint hover:text-destructive hover:bg-destructive/10 transition-all"
           >
             {t.control.kill}
           </button>
@@ -63,20 +63,20 @@ function ProcessCard({ proc, selected, onSelect, onKill }: {
 
       <div className="grid grid-cols-3 gap-3 mb-2">
         <div>
-          <p className="text-[9px] text-foreground/20 uppercase">CPU</p>
+          <p className="text-[9px] text-ink-faint uppercase">CPU</p>
           <p className="text-[13px] font-semibold tabular-nums text-foreground/70">{proc.cpu.toFixed(1)}%</p>
         </div>
         <div>
-          <p className="text-[9px] text-foreground/20 uppercase">RAM</p>
+          <p className="text-[9px] text-ink-faint uppercase">RAM</p>
           <p className="text-[13px] font-semibold tabular-nums text-foreground/70">{proc.rss_mb.toFixed(0)} MB</p>
         </div>
         <div>
-          <p className="text-[9px] text-foreground/20 uppercase">{t.control.uptime}</p>
+          <p className="text-[9px] text-ink-faint uppercase">{t.control.uptime}</p>
           <p className="text-[13px] font-semibold tabular-nums text-foreground/70">{proc.elapsed}</p>
         </div>
       </div>
 
-      <p className="text-[10px] text-foreground/15 font-mono truncate">{proc.command}</p>
+      <p className="text-[10px] text-ink-faint font-mono truncate">{proc.command}</p>
     </button>
   );
 }
@@ -101,15 +101,15 @@ function LogViewer() {
   }, []);
 
   return (
-    <div className="rounded-xl border border-border/30 bg-black/30 overflow-hidden">
+    <div className="rounded-xl border border-border/30 bg-code overflow-hidden">
       <div className="px-4 py-2 border-b border-border/20">
-        <span className="text-[11px] font-medium text-foreground/40">{t.control.processLogs}</span>
-        <span className="text-[10px] text-foreground/15 ml-2">{lines.length} lines</span>
+        <span className="text-[11px] font-medium text-ink-soft">{t.control.processLogs}</span>
+        <span className="text-[10px] text-ink-faint ml-2">{lines.length} lines</span>
       </div>
       <ScrollArea className="h-[400px]">
         <div className="p-3 font-mono text-[10px] leading-relaxed">
           {lines.length === 0 ? (
-            <p className="text-foreground/15 text-center py-8">{t.control.noLogs}</p>
+            <p className="text-ink-faint text-center py-8">{t.control.noLogs}</p>
           ) : (
             lines.map((line, i) => {
               const isErr = line.includes("level=error");
@@ -118,7 +118,7 @@ function LogViewer() {
                 <div
                   key={i}
                   className={`py-[1px] ${
-                    isErr ? "text-red-400/70" : isWarn ? "text-yellow-400/60" : "text-foreground/30"
+                    isErr ? "text-destructive" : isWarn ? "text-warning" : "text-ink-dim"
                   }`}
                 >
                   {line}
@@ -191,7 +191,7 @@ export function ControlTab() {
         {/* Process grid */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[13px] font-medium text-foreground/50">
+            <h3 className="text-[13px] font-medium text-ink-soft">
               {t.control.activeProcesses}
             </h3>
             <button
@@ -203,7 +203,7 @@ export function ControlTab() {
           </div>
 
           {processes.length === 0 ? (
-            <p className="text-foreground/20 text-[12px] text-center py-8">{t.control.noProcesses}</p>
+            <p className="text-ink-faint text-[12px] text-center py-8">{t.control.noProcesses}</p>
           ) : (
             <div className="grid grid-cols-2 gap-3">
               {processes.map((p) => (

@@ -47,7 +47,7 @@ export function ThemeToggle({ onChange }: { onChange?: (t: Theme) => void }) {
         (dark ? "Switch to light theme" : "Switch to dark theme") +
         (overridden ? "" : " (currently following the system)")
       }
-      className="flex items-center justify-center w-7 h-7 rounded-md text-foreground/50 hover:text-foreground hover:bg-foreground/[0.06] transition-colors"
+      className="flex items-center justify-center w-7 h-7 rounded-md text-ink-soft hover:text-foreground hover:bg-foreground/[0.06] transition-colors"
     >
       {dark ? (
         <svg

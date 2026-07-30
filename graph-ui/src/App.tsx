@@ -128,7 +128,7 @@ export function App() {
         <div className="flex items-center gap-2 h-12 shrink-0">
           {selectedProject && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-foreground/[0.04] border border-border/30">
-              <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
+              <span className="text-[10px] text-ink-dim uppercase tracking-wider">
                 {t.graph.selectedLabel}
               </span>
               <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
@@ -136,7 +136,7 @@ export function App() {
               </span>
               <button
                 onClick={() => navigate("stats", null)}
-                className="text-foreground/20 hover:text-foreground/50 text-[12px] ml-1 transition-colors"
+                className="text-ink-faint hover:text-ink-soft text-[12px] ml-1 transition-colors"
               >
                 ×
               </button>

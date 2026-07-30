@@ -9,13 +9,38 @@
 import {
   DEFAULT_LAYOUT_PARAMS,
   LAYOUT_LIMITS,
+  LEAF_SHAPES,
   VIEW_MODES,
   type LayoutParams,
-  type TreeDirection,
+  type LeafShape,
   type ViewMode,
 } from "./viewLayout";
 
 export type PathLightStyle = "comet" | "dots";
+
+/* Where the light takes its colour.
+ *
+ * "strand" is the default because the graph already colours every edge by type
+ * and every node by degree, and a single fixed light throws that away — the
+ * interesting thing about a traversal is *what kind* of link each hop is. In
+ * strand mode the head picks up the colour of the segment it is currently
+ * crossing and cross-fades on the way, so an IMPORTS hop and a CALLS hop are
+ * distinguishable while the light is moving. */
+export type PathLightColorMode = "strand" | "theme" | "custom";
+
+/* Ready-made light colours. The picker stays for anything else — these exist
+ * because hunting for a good value in an OS colour dialog is the slow way to
+ * answer "what else could this look like". */
+export const PATH_LIGHT_PRESETS: { name: string; color: string }[] = [
+  { name: "North star", color: "#ffce6e" },
+  { name: "Ion", color: "#67e8f9" },
+  { name: "Magenta", color: "#f472b6" },
+  { name: "Emerald", color: "#34d399" },
+  { name: "Ember", color: "#fb7185" },
+  { name: "Violet", color: "#a78bfa" },
+  { name: "Signal white", color: "#f8fafc" },
+  { name: "Deep teal", color: "#0e7490" },
+];
 
 /* "idle" is the original showpiece — start orbiting after a minute untouched.
  * The toolbar toggle switches to an explicit "on"/"off" so the user can start or
@@ -34,8 +59,12 @@ export interface ViewSettings {
   pathLightStyle: PathLightStyle;
   /** Travel speed multiplier. */
   pathLightSpeed: number;
-  /** Light colour, or "" to follow the theme accent. */
+  /** Where the light's colour comes from. */
+  pathLightColorMode: PathLightColorMode;
+  /** The colour used when the mode is "custom". */
   pathLightColor: string;
+  /** Speed up per containment level already passed. Off by default. */
+  pathLightAccel: boolean;
   /** Per-label colour overrides; absent label = palette default. */
   labelColors: Record<string, string>;
 }
@@ -48,15 +77,20 @@ export const DEFAULT_VIEW_SETTINGS: ViewSettings = {
   pathLight: true,
   pathLightStyle: "comet",
   pathLightSpeed: 1,
-  pathLightColor: "",
+  pathLightColorMode: "strand",
+  pathLightColor: "#ffce6e",
+  /* Off by default: it is a flourish, and on a deep corpus the light arrives
+   * before the eye has followed it. Opt in from Settings → Animation. */
+  pathLightAccel: false,
   labelColors: {},
 };
 
 export const VIEW_LIMITS = {
   fov: { min: 25, max: 100 },
   pathLightSpeed: { min: 0.2, max: 3 },
-  sphereScale: LAYOUT_LIMITS.sphereScale,
-  coneHeight: LAYOUT_LIMITS.coneHeight,
+  spread: LAYOUT_LIMITS.spread,
+  coneSteep: LAYOUT_LIMITS.coneSteep,
+  branchSpread: LAYOUT_LIMITS.branchSpread,
 } as const;
 
 const STORAGE_KEY = "cbm-view";
@@ -89,10 +123,6 @@ export function clampViewSettings(raw: unknown): ViewSettings {
   const mode = VIEW_MODES.includes(r.mode as ViewMode)
     ? (r.mode as ViewMode)
     : DEFAULT_VIEW_SETTINGS.mode;
-  const treeDirection: TreeDirection =
-    rawLayout.treeDirection === "horizontal" || rawLayout.treeDirection === "vertical"
-      ? rawLayout.treeDirection
-      : DEFAULT_LAYOUT_PARAMS.treeDirection;
 
   const labelColors: Record<string, string> = {};
   if (typeof r.labelColors === "object" && r.labelColors !== null) {
@@ -105,17 +135,20 @@ export function clampViewSettings(raw: unknown): ViewSettings {
   return {
     mode,
     layout: {
-      sphereScale: clampNum(
-        rawLayout.sphereScale,
-        VIEW_LIMITS.sphereScale,
-        DEFAULT_LAYOUT_PARAMS.sphereScale,
+      spread: clampNum(rawLayout.spread, VIEW_LIMITS.spread, DEFAULT_LAYOUT_PARAMS.spread),
+      coneSteep: clampNum(
+        rawLayout.coneSteep,
+        VIEW_LIMITS.coneSteep,
+        DEFAULT_LAYOUT_PARAMS.coneSteep,
       ),
-      coneHeight: clampNum(
-        rawLayout.coneHeight,
-        VIEW_LIMITS.coneHeight,
-        DEFAULT_LAYOUT_PARAMS.coneHeight,
+      branchSpread: clampNum(
+        rawLayout.branchSpread,
+        VIEW_LIMITS.branchSpread,
+        DEFAULT_LAYOUT_PARAMS.branchSpread,
       ),
-      treeDirection,
+      leafShape: LEAF_SHAPES.includes(rawLayout.leafShape as LeafShape)
+        ? (rawLayout.leafShape as LeafShape)
+        : DEFAULT_LAYOUT_PARAMS.leafShape,
     },
     fov: clampNum(r.fov, VIEW_LIMITS.fov, DEFAULT_VIEW_SETTINGS.fov),
     autoRotate:
@@ -130,7 +163,17 @@ export function clampViewSettings(raw: unknown): ViewSettings {
       VIEW_LIMITS.pathLightSpeed,
       DEFAULT_VIEW_SETTINGS.pathLightSpeed,
     ),
-    pathLightColor: cleanColor(r.pathLightColor) ?? "",
+    pathLightColorMode:
+      r.pathLightColorMode === "theme" ||
+      r.pathLightColorMode === "custom" ||
+      r.pathLightColorMode === "strand"
+        ? r.pathLightColorMode
+        : DEFAULT_VIEW_SETTINGS.pathLightColorMode,
+    pathLightColor: cleanColor(r.pathLightColor) ?? DEFAULT_VIEW_SETTINGS.pathLightColor,
+    pathLightAccel:
+      typeof r.pathLightAccel === "boolean"
+        ? r.pathLightAccel
+        : DEFAULT_VIEW_SETTINGS.pathLightAccel,
     labelColors,
   };
 }

@@ -31,15 +31,15 @@ export class ErrorBoundary extends Component<Props, State> {
         this.props.fallback ?? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center p-8 max-w-md">
-              <p className="text-red-400 text-lg font-medium mb-2">
+              <p className="text-destructive text-lg font-medium mb-2">
                 Rendering error
               </p>
-              <p className="text-white/50 text-sm font-mono">
+              <p className="text-ink-soft text-sm font-mono">
                 {this.state.error?.message ?? "Unknown error"}
               </p>
               <button
                 onClick={() => this.setState({ hasError: false, error: null })}
-                className="mt-4 px-4 py-2 bg-white/10 hover:bg-white/20 rounded text-sm transition-colors"
+                className="mt-4 px-4 py-2 bg-surface-2 hover:bg-surface-3 rounded text-sm transition-colors"
               >
                 Retry
               </button>

@@ -100,7 +100,7 @@ describe("clampDisplaySettings", () => {
     expect(clampDisplaySettings({})).toEqual(DEFAULT_DISPLAY_SETTINGS);
     expect(
       clampDisplaySettings({ edgeBrightness: 99, nodeGlow: -5, bloom: 1.5 }),
-    ).toEqual({ edgeBrightness: 3, nodeGlow: 0, bloom: 1.5 });
+    ).toEqual({ edgeBrightness: 3, nodeGlow: 0, bloom: 1.5, edgeCurve: 0.35 });
     expect(clampDisplaySettings({ bloom: Number.NaN }).bloom).toBe(
       DEFAULT_DISPLAY_SETTINGS.bloom,
     );

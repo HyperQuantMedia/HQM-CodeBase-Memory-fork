@@ -7,14 +7,18 @@ import {
 } from "../lib/density";
 import {
   DEFAULT_VIEW_SETTINGS,
+  PATH_LIGHT_PRESETS,
   VIEW_LIMITS,
+  type PathLightColorMode,
   type PathLightStyle,
   type ViewSettings,
 } from "../lib/viewSettings";
 import {
+  LEAF_SHAPES,
+  LEAF_SHAPE_LABEL,
   VIEW_MODES,
   VIEW_MODE_LABEL,
-  type TreeDirection,
+  type LeafShape,
   type ViewMode,
 } from "../lib/viewLayout";
 import { defaultColorForLabel } from "../lib/colors";
@@ -74,7 +78,7 @@ function SliderRow({
         className="w-full accent-primary cursor-pointer"
         aria-label={`${label} (${hint})`}
       />
-      <p className="text-[9px] text-foreground/30 mt-0.5">{hint}</p>
+      <p className="text-[9px] text-ink-dim mt-0.5">{hint}</p>
     </label>
   );
 }
@@ -121,7 +125,7 @@ function CheckRow({
     <button
       onClick={onToggle}
       className={`flex items-center gap-1.5 text-[11px] font-medium transition-colors ${
-        checked ? "text-primary" : "text-foreground/40"
+        checked ? "text-primary" : "text-ink-soft"
       }`}
     >
       <span
@@ -177,10 +181,13 @@ export function SettingsMenu({
   const displayDefault =
     display.edgeBrightness === DEFAULT_DISPLAY_SETTINGS.edgeBrightness &&
     display.nodeGlow === DEFAULT_DISPLAY_SETTINGS.nodeGlow &&
-    display.bloom === DEFAULT_DISPLAY_SETTINGS.bloom;
+    display.bloom === DEFAULT_DISPLAY_SETTINGS.bloom &&
+    display.edgeCurve === DEFAULT_DISPLAY_SETTINGS.edgeCurve;
   const viewDefault =
     view.mode === DEFAULT_VIEW_SETTINGS.mode &&
     view.fov === DEFAULT_VIEW_SETTINGS.fov &&
+    view.pathLightColorMode === DEFAULT_VIEW_SETTINGS.pathLightColorMode &&
+    view.pathLightAccel === DEFAULT_VIEW_SETTINGS.pathLightAccel &&
     Object.keys(view.labelColors).length === 0;
   const isDefault = displayDefault && viewDefault;
 
@@ -215,7 +222,7 @@ export function SettingsMenu({
                 className={`flex-1 px-1.5 py-1 rounded-md text-[10.5px] font-medium transition-colors ${
                   tab === t.id
                     ? "bg-primary/15 text-primary"
-                    : "text-foreground/45 hover:text-foreground/75 hover:bg-foreground/[0.04]"
+                    : "text-ink-soft hover:text-foreground/75 hover:bg-foreground/[0.04]"
                 }`}
               >
                 {t.label}
@@ -232,38 +239,46 @@ export function SettingsMenu({
                   options={VIEW_MODES.map((m) => ({ value: m, label: VIEW_MODE_LABEL[m] }))}
                   onChange={(mode) => setView({ mode })}
                 />
-                {view.mode === "tree" && (
-                  <SelectRow<TreeDirection>
-                    label="Tree flow"
-                    value={view.layout.treeDirection}
-                    options={[
-                      { value: "vertical", label: "top → bottom" },
-                      { value: "horizontal", label: "left → right" },
-                    ]}
-                    onChange={(treeDirection) => setLayout({ treeDirection })}
-                  />
-                )}
-                {view.mode === "sphere" && (
+                {view.mode !== "default" && (
                   <SliderRow
-                    label="Sphere size"
-                    hint="Radius; auto-fits to corpus depth at 1.00×"
-                    value={view.layout.sphereScale}
-                    min={VIEW_LIMITS.sphereScale.min}
-                    max={VIEW_LIMITS.sphereScale.max}
-                    onChange={(sphereScale) => setLayout({ sphereScale })}
+                    label="Spacing"
+                    hint="1.00× matches the node spacing of the server layout"
+                    value={view.layout.spread}
+                    min={VIEW_LIMITS.spread.min}
+                    max={VIEW_LIMITS.spread.max}
+                    onChange={(spread) => setLayout({ spread })}
                   />
                 )}
                 {view.mode === "cone" && (
                   <SliderRow
-                    label="Cone height"
-                    hint="World units per depth level"
-                    value={view.layout.coneHeight}
-                    min={VIEW_LIMITS.coneHeight.min}
-                    max={VIEW_LIMITS.coneHeight.max}
-                    step={10}
-                    format={(v) => `${v.toFixed(0)}u`}
-                    onChange={(coneHeight) => setLayout({ coneHeight })}
+                    label="Cone steepness"
+                    hint="Drop per level, as a fraction of that level's own width"
+                    value={view.layout.coneSteep}
+                    min={VIEW_LIMITS.coneSteep.min}
+                    max={VIEW_LIMITS.coneSteep.max}
+                    onChange={(coneSteep) => setLayout({ coneSteep })}
                   />
+                )}
+                {view.mode === "tree" && (
+                  <>
+                    <SliderRow
+                      label="Branch spread"
+                      hint="How wide a limb fans its children"
+                      value={view.layout.branchSpread}
+                      min={VIEW_LIMITS.branchSpread.min}
+                      max={VIEW_LIMITS.branchSpread.max}
+                      onChange={(branchSpread) => setLayout({ branchSpread })}
+                    />
+                    <SelectRow<LeafShape>
+                      label="Leaf clusters"
+                      value={view.layout.leafShape}
+                      options={LEAF_SHAPES.map((v) => ({
+                        value: v,
+                        label: LEAF_SHAPE_LABEL[v],
+                      }))}
+                      onChange={(leafShape) => setLayout({ leafShape })}
+                    />
+                  </>
                 )}
                 <SliderRow
                   label="Perspective"
@@ -275,9 +290,12 @@ export function SettingsMenu({
                   format={(v) => `${v.toFixed(0)}°`}
                   onChange={(fov) => setView({ fov })}
                 />
-                <p className="text-[9px] text-foreground/30 pt-1 border-t border-border/30">
+                <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
                   Alternate projections are derived from the graph's own
-                  hierarchy in the browser; Force is the server's layout.
+                  hierarchy in the browser; Web is the server's force layout.
+                  Each container becomes its own cluster, and its children
+                  cluster inside that — so a folder reads as a sphere of files,
+                  not a point on one big shell.
                 </p>
               </>
             )}
@@ -285,7 +303,7 @@ export function SettingsMenu({
             {tab === "display" && (
               <>
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-foreground/50 uppercase tracking-widest">
+                  <span className="text-[11px] font-medium text-ink-soft uppercase tracking-widest">
                     Contrast
                   </span>
                   <button
@@ -314,13 +332,21 @@ export function SettingsMenu({
                 />
                 <SliderRow
                   label="Bloom"
-                  hint="Overall glow bloom strength"
+                  hint="Overall glow bloom strength (dark theme only)"
                   value={display.bloom}
                   min={DISPLAY_LIMITS.bloom.min}
                   max={DISPLAY_LIMITS.bloom.max}
                   onChange={(bloom) => setDisplay({ bloom })}
                 />
-                <p className="text-[9px] text-foreground/30 pt-1 border-t border-border/30">
+                <SliderRow
+                  label="Link curvature"
+                  hint="Bow each link outward; 0 draws straight chords"
+                  value={display.edgeCurve}
+                  min={DISPLAY_LIMITS.edgeCurve.min}
+                  max={DISPLAY_LIMITS.edgeCurve.max}
+                  onChange={(edgeCurve) => setDisplay({ edgeCurve })}
+                />
+                <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
                   1.00× follows the automatic density compensation. Lower the
                   edge/glow/bloom values when a large graph washes out to white.
                 </p>
@@ -330,7 +356,7 @@ export function SettingsMenu({
             {tab === "colors" && (
               <>
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-foreground/50 uppercase tracking-widest">
+                  <span className="text-[11px] font-medium text-ink-soft uppercase tracking-widest">
                     Node labels
                   </span>
                   <button
@@ -342,7 +368,7 @@ export function SettingsMenu({
                   </button>
                 </div>
                 {sortedLabels.length === 0 && (
-                  <p className="text-[11px] text-foreground/30">No labels loaded.</p>
+                  <p className="text-[11px] text-ink-dim">No labels loaded.</p>
                 )}
                 <div className="space-y-1.5">
                   {sortedLabels.map((label) => {
@@ -371,7 +397,7 @@ export function SettingsMenu({
                               delete next[label];
                               setView({ labelColors: next });
                             }}
-                            className="text-[9px] text-foreground/35 hover:text-foreground/70 transition-colors shrink-0"
+                            className="text-[9px] text-ink-dim hover:text-foreground/70 transition-colors shrink-0"
                             title="Back to the palette default"
                           >
                             auto
@@ -381,7 +407,7 @@ export function SettingsMenu({
                     );
                   })}
                 </div>
-                <p className="text-[9px] text-foreground/30 pt-1 border-t border-border/30">
+                <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
                   Defaults are the built-in palette; unknown labels get a stable
                   generated hue. Custom colors skip the contrast checks.
                 </p>
@@ -413,28 +439,63 @@ export function SettingsMenu({
                   step={0.1}
                   onChange={(pathLightSpeed) => setView({ pathLightSpeed })}
                 />
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-foreground/70 flex-1">Light color</span>
-                  <input
-                    type="color"
-                    value={normalizeForPicker(view.pathLightColor || "#ffce6e")}
-                    onChange={(e) => setView({ pathLightColor: e.target.value })}
-                    className="w-6 h-6 rounded border border-border/60 bg-transparent cursor-pointer"
-                    aria-label="Path light color"
-                  />
-                  {view.pathLightColor && (
-                    <button
-                      onClick={() => setView({ pathLightColor: "" })}
-                      className="text-[9px] text-foreground/35 hover:text-foreground/70 transition-colors"
-                      title="Follow the theme accent"
-                    >
-                      auto
-                    </button>
-                  )}
-                </div>
-                <p className="text-[9px] text-foreground/30 pt-1 border-t border-border/30">
+                <CheckRow
+                  label="Accelerate per level"
+                  checked={view.pathLightAccel}
+                  onToggle={() => setView({ pathLightAccel: !view.pathLightAccel })}
+                />
+                <SelectRow<PathLightColorMode>
+                  label="Light color"
+                  value={view.pathLightColorMode}
+                  options={[
+                    { value: "strand", label: "follow the strand" },
+                    { value: "theme", label: "theme accent" },
+                    { value: "custom", label: "fixed color" },
+                  ]}
+                  onChange={(pathLightColorMode) => setView({ pathLightColorMode })}
+                />
+                {view.pathLightColorMode === "custom" && (
+                  <>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PATH_LIGHT_PRESETS.map((preset) => {
+                        const active =
+                          view.pathLightColor.toLowerCase() === preset.color.toLowerCase();
+                        return (
+                          <button
+                            key={preset.color}
+                            onClick={() => setView({ pathLightColor: preset.color })}
+                            title={preset.name}
+                            aria-label={preset.name}
+                            aria-pressed={active}
+                            className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 ${
+                              active
+                                ? "border-primary scale-110"
+                                : "border-border/60"
+                            }`}
+                            style={{ backgroundColor: preset.color }}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-foreground/70 flex-1">
+                        Custom
+                      </span>
+                      <input
+                        type="color"
+                        value={normalizeForPicker(view.pathLightColor)}
+                        onChange={(e) => setView({ pathLightColor: e.target.value })}
+                        className="w-6 h-6 rounded border border-border/60 bg-transparent cursor-pointer"
+                        aria-label="Path light color"
+                      />
+                    </div>
+                  </>
+                )}
+                <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
                   Selecting a node sends a light down its containment chain from
-                  the outermost ancestor, gaining speed at every level it passes.
+                  the outermost ancestor, then forks it along that node's own
+                  references. Following the strand tints the light with whatever
+                  it is currently crossing, so the hops stay distinguishable.
                 </p>
               </>
             )}

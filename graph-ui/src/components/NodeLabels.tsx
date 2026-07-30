@@ -1,11 +1,14 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { GraphNode } from "../lib/types";
+import { inkNode, type Stage } from "../lib/sceneInk";
 
 interface NodeLabelsProps {
   nodes: GraphNode[];
   highlightedIds: Set<number> | null;
   maxLabels?: number;
+  /* Emission on darkness vs ink on paper — see lib/sceneInk.ts. */
+  stage?: Stage;
 }
 
 interface LabelTexture {
@@ -42,7 +45,11 @@ function fitText(
   return `${text.slice(0, Math.max(1, lo))}...`;
 }
 
-function createLabelTexture(name: string, color: string): LabelTexture | null {
+function createLabelTexture(
+  name: string,
+  color: string,
+  stage: Stage,
+): LabelTexture | null {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -74,8 +81,17 @@ function createLabelTexture(name: string, color: string): LabelTexture | null {
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
   ctx.lineWidth = TEXTURE_STROKE_WIDTH;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
-  ctx.fillStyle = color;
+  /* The outline exists to separate the text from whatever sits behind it, so it
+   * has to oppose the stage: a black halo on a light canvas turns every label
+   * into a smudge. The fill darkens for the same reason — it borrows the node's
+   * pale stellar colour, which is unreadable on paper. */
+  if (stage === "light") {
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+    ctx.fillStyle = darkenHex(color);
+  } else {
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+    ctx.fillStyle = color;
+  }
 
   const x = logicalWidth / 2;
   const y = logicalHeight / 2;
@@ -96,10 +112,29 @@ function createLabelTexture(name: string, color: string): LabelTexture | null {
   };
 }
 
-function NodeLabelSprite({ node }: { node: GraphNode }) {
+/* Darken a #rrggbb node colour for the light stage. Anything else (a generated
+ * hsl(), a colour name) is passed through — the canvas will still draw it, just
+ * without the light-stage correction. */
+function darkenHex(css: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(css.trim());
+  if (!m) return css;
+  const v = parseInt(m[1], 16);
+  const [r, g, b] = inkNode(
+    ((v >> 16) & 255) / 255,
+    ((v >> 8) & 255) / 255,
+    (v & 255) / 255,
+  );
+  const to = (x: number) =>
+    Math.round(Math.min(1, Math.max(0, x)) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return "#" + to(r) + to(g) + to(b);
+}
+
+function NodeLabelSprite({ node, stage }: { node: GraphNode; stage: Stage }) {
   const label = useMemo(
-    () => createLabelTexture(node.name, node.color),
-    [node.name, node.color],
+    () => createLabelTexture(node.name, node.color, stage),
+    [node.name, node.color, stage],
   );
 
   useEffect(() => {
@@ -133,6 +168,7 @@ export function NodeLabels({
   nodes,
   highlightedIds,
   maxLabels = 80,
+  stage = "dark",
 }: NodeLabelsProps) {
   const labeled = useMemo(() => {
     const hasHighlight = highlightedIds && highlightedIds.size > 0;
@@ -150,7 +186,7 @@ export function NodeLabels({
   return (
     <group>
       {labeled.map((node) => (
-        <NodeLabelSprite key={node.id} node={node} />
+        <NodeLabelSprite key={node.id} node={node} stage={stage} />
       ))}
     </group>
   );
