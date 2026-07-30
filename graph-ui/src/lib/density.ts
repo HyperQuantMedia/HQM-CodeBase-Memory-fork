@@ -73,40 +73,7 @@ export function nodeGlowBoost(r: number, g: number, b: number): number {
   return GLOW_BASE + blueness * GLOW_BLUE_GAIN + redness * GLOW_RED_GAIN;
 }
 
-/* ── Manual display settings ──────────────────────────────────── *
- * User-facing multipliers layered ON TOP of the adaptive scales above:
- * the adaptive scale picks a sane default for the current density, the
- * sliders let the user push contrast/brightness around it. Persisted
- * globally (a display preference, not a per-project fact). */
-
-export interface DisplaySettings {
-  /** Edge brightness multiplier (0.1–3, default 1). */
-  edgeBrightness: number;
-  /** Node glow-boost multiplier (0–2, default 1). */
-  nodeGlow: number;
-  /** Bloom intensity multiplier (0–2, default 1). */
-  bloom: number;
-  /** How far each link bows away from a straight chord (0 = straight). */
-  edgeCurve: number;
-}
-
-export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
-  edgeBrightness: 1,
-  nodeGlow: 1,
-  bloom: 1,
-  /* On by default. Straight chords are what makes a hierarchical projection read
-   * as a wire diagram next to the server's force layout: every link is a taut
-   * radius through the middle. A slight outward bow gives the same graph the
-   * branching, organic look, and costs nothing at rest. */
-  edgeCurve: 0.35,
-};
-
-export const DISPLAY_LIMITS = {
-  edgeBrightness: { min: 0.1, max: 3 },
-  nodeGlow: { min: 0, max: 2 },
-  bloom: { min: 0, max: 2 },
-  edgeCurve: { min: 0, max: 1 },
-} as const;
+/* ── Curved-link cost ─────────────────────────────────────────── */
 
 /* Curving an edge multiplies its vertex count by the subdivision level, so past
  * this many edges the bow is dropped rather than quietly costing 3M vertices. */
@@ -120,36 +87,6 @@ export function edgeCurveSegments(edgeCount: number): number {
   return 9;
 }
 
-const DISPLAY_STORAGE_KEY = "cbm-display";
-
-function clampSetting(key: keyof DisplaySettings, value: unknown): number {
-  const { min, max } = DISPLAY_LIMITS[key];
-  const n = typeof value === "number" ? value : Number.NaN;
-  if (!Number.isFinite(n)) return DEFAULT_DISPLAY_SETTINGS[key];
-  return Math.min(max, Math.max(min, n));
-}
-
-export function clampDisplaySettings(
-  raw: Partial<DisplaySettings>,
-): DisplaySettings {
-  return {
-    edgeBrightness: clampSetting("edgeBrightness", raw.edgeBrightness),
-    nodeGlow: clampSetting("nodeGlow", raw.nodeGlow),
-    bloom: clampSetting("bloom", raw.bloom),
-    edgeCurve: clampSetting("edgeCurve", raw.edgeCurve),
-  };
-}
-
-export function loadDisplaySettings(): DisplaySettings {
-  try {
-    const raw = localStorage.getItem(DISPLAY_STORAGE_KEY);
-    if (raw) return clampDisplaySettings(JSON.parse(raw));
-  } catch { /* ignore */ }
-  return DEFAULT_DISPLAY_SETTINGS;
-}
-
-export function saveDisplaySettings(settings: DisplaySettings) {
-  try {
-    localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify(settings));
-  } catch { /* ignore */ }
-}
+/* The user-facing multipliers that ride on top of these scales live in
+ * lib/appearance.ts, stored per theme — the dark and light stages are different
+ * rendering models, so one shared set of knobs cannot serve both. */

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  DEFAULT_DISPLAY_SETTINGS,
-  DISPLAY_LIMITS,
-  type DisplaySettings,
-} from "../lib/density";
+  APPEARANCE_LIMITS,
+  PATH_LIGHT_PRESETS,
+  isAppearanceDefault,
+  type Appearance,
+  type PathLightColorMode,
+} from "../lib/appearance";
+import type { Stage } from "../lib/sceneInk";
 import {
   DEFAULT_VIEW_SETTINGS,
-  PATH_LIGHT_PRESETS,
   VIEW_LIMITS,
-  type PathLightColorMode,
   type PathLightStyle,
   type ViewSettings,
 } from "../lib/viewSettings";
@@ -33,12 +34,32 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 interface SettingsMenuProps {
-  display: DisplaySettings;
-  onDisplayChange: (next: DisplaySettings) => void;
+  /** Which theme's appearance is being edited. */
+  stage: Stage;
+  appearance: Appearance;
+  onAppearanceChange: (next: Appearance) => void;
+  /** Restore this theme's own defaults, leaving the other theme alone. */
+  onAppearanceReset: () => void;
   view: ViewSettings;
   onViewChange: (next: ViewSettings) => void;
   /** Labels present in the loaded graph — the Colors tab lists exactly these. */
   labels: string[];
+}
+
+const STAGE_LABEL: Record<Stage, string> = { dark: "Dark", light: "Light" };
+
+/* Appearance is per theme; view and animation timing are not. Saying so where the
+ * controls are is cheaper than leaving the user to discover that Display looks
+ * different after they flip the theme. */
+function ThemeScope({ stage }: { stage: Stage }) {
+  return (
+    <span
+      className="text-[9px] px-1.5 py-0.5 rounded bg-surface-2 text-ink-dim font-medium"
+      title="These settings are stored separately for each theme"
+    >
+      {STAGE_LABEL[stage]} theme
+    </span>
+  );
 }
 
 function SliderRow({
@@ -144,8 +165,10 @@ function CheckRow({
  * path-light animation. Grown from the old display-only menu — same trigger and
  * dismissal behavior, four tabs instead of one list. */
 export function SettingsMenu({
-  display,
-  onDisplayChange,
+  stage,
+  appearance,
+  onAppearanceChange,
+  onAppearanceReset,
   view,
   onViewChange,
   labels,
@@ -172,24 +195,18 @@ export function SettingsMenu({
     };
   }, [open]);
 
-  const setDisplay = (patch: Partial<DisplaySettings>) =>
-    onDisplayChange({ ...display, ...patch });
+  const setDisplay = (patch: Partial<Appearance>) =>
+    onAppearanceChange({ ...appearance, ...patch });
   const setView = (patch: Partial<ViewSettings>) => onViewChange({ ...view, ...patch });
   const setLayout = (patch: Partial<ViewSettings["layout"]>) =>
     onViewChange({ ...view, layout: { ...view.layout, ...patch } });
 
-  const displayDefault =
-    display.edgeBrightness === DEFAULT_DISPLAY_SETTINGS.edgeBrightness &&
-    display.nodeGlow === DEFAULT_DISPLAY_SETTINGS.nodeGlow &&
-    display.bloom === DEFAULT_DISPLAY_SETTINGS.bloom &&
-    display.edgeCurve === DEFAULT_DISPLAY_SETTINGS.edgeCurve;
+  const appearanceDefault = isAppearanceDefault(stage, appearance);
   const viewDefault =
     view.mode === DEFAULT_VIEW_SETTINGS.mode &&
     view.fov === DEFAULT_VIEW_SETTINGS.fov &&
-    view.pathLightColorMode === DEFAULT_VIEW_SETTINGS.pathLightColorMode &&
-    view.pathLightAccel === DEFAULT_VIEW_SETTINGS.pathLightAccel &&
-    Object.keys(view.labelColors).length === 0;
-  const isDefault = displayDefault && viewDefault;
+    view.pathLightAccel === DEFAULT_VIEW_SETTINGS.pathLightAccel;
+  const isDefault = appearanceDefault && viewDefault;
 
   const sortedLabels = useMemo(() => [...labels].sort((a, b) => a.localeCompare(b)), [labels]);
 
@@ -302,69 +319,83 @@ export function SettingsMenu({
 
             {tab === "display" && (
               <>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-ink-soft uppercase tracking-widest">
-                    Contrast
-                  </span>
+                <div className="flex items-center justify-between gap-2">
+                  <ThemeScope stage={stage} />
                   <button
-                    onClick={() => onDisplayChange(DEFAULT_DISPLAY_SETTINGS)}
+                    onClick={onAppearanceReset}
                     className="text-[10px] text-primary/70 hover:text-primary transition-colors disabled:opacity-30"
-                    disabled={displayDefault}
+                    disabled={appearanceDefault}
+                    title={`Restore the ${STAGE_LABEL[stage].toLowerCase()} theme's defaults`}
                   >
-                    Reset
+                    Reset to defaults
                   </button>
                 </div>
                 <SliderRow
-                  label="Edge brightness"
-                  hint="Dim the web of links on dense graphs"
-                  value={display.edgeBrightness}
-                  min={DISPLAY_LIMITS.edgeBrightness.min}
-                  max={DISPLAY_LIMITS.edgeBrightness.max}
+                  label={stage === "light" ? "Link ink" : "Link brightness"}
+                  hint={
+                    stage === "light"
+                      ? "How strongly each link marks the page"
+                      : "Dim the web of links on dense graphs"
+                  }
+                  value={appearance.edgeBrightness}
+                  min={APPEARANCE_LIMITS.edgeBrightness.min}
+                  max={APPEARANCE_LIMITS.edgeBrightness.max}
                   onChange={(edgeBrightness) => setDisplay({ edgeBrightness })}
                 />
                 <SliderRow
-                  label="Node glow"
-                  hint="Halo boost around each node"
-                  value={display.nodeGlow}
-                  min={DISPLAY_LIMITS.nodeGlow.min}
-                  max={DISPLAY_LIMITS.nodeGlow.max}
-                  onChange={(nodeGlow) => setDisplay({ nodeGlow })}
+                  label="Node size"
+                  hint="Radius of every node marker"
+                  value={appearance.nodeScale}
+                  min={APPEARANCE_LIMITS.nodeScale.min}
+                  max={APPEARANCE_LIMITS.nodeScale.max}
+                  onChange={(nodeScale) => setDisplay({ nodeScale })}
                 />
-                <SliderRow
-                  label="Bloom"
-                  hint="Overall glow bloom strength (dark theme only)"
-                  value={display.bloom}
-                  min={DISPLAY_LIMITS.bloom.min}
-                  max={DISPLAY_LIMITS.bloom.max}
-                  onChange={(bloom) => setDisplay({ bloom })}
-                />
+                {stage === "dark" && (
+                  <>
+                    <SliderRow
+                      label="Node glow"
+                      hint="Halo boost around each node"
+                      value={appearance.nodeGlow}
+                      min={APPEARANCE_LIMITS.nodeGlow.min}
+                      max={APPEARANCE_LIMITS.nodeGlow.max}
+                      onChange={(nodeGlow) => setDisplay({ nodeGlow })}
+                    />
+                    <SliderRow
+                      label="Bloom"
+                      hint="Overall glow bloom strength"
+                      value={appearance.bloom}
+                      min={APPEARANCE_LIMITS.bloom.min}
+                      max={APPEARANCE_LIMITS.bloom.max}
+                      onChange={(bloom) => setDisplay({ bloom })}
+                    />
+                  </>
+                )}
                 <SliderRow
                   label="Link curvature"
                   hint="Bow each link outward; 0 draws straight chords"
-                  value={display.edgeCurve}
-                  min={DISPLAY_LIMITS.edgeCurve.min}
-                  max={DISPLAY_LIMITS.edgeCurve.max}
+                  value={appearance.edgeCurve}
+                  min={APPEARANCE_LIMITS.edgeCurve.min}
+                  max={APPEARANCE_LIMITS.edgeCurve.max}
                   onChange={(edgeCurve) => setDisplay({ edgeCurve })}
                 />
                 <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
-                  1.00× follows the automatic density compensation. Lower the
-                  edge/glow/bloom values when a large graph washes out to white.
+                  {stage === "light"
+                    ? "Stored for the light theme only. Links are drawn as ink that darkens where it overlaps, so a dense graph still reads as dense — there is no bloom on paper, hence no glow controls."
+                    : "Stored for the dark theme only. 1.00× follows the automatic density compensation; lower the edge/glow/bloom values when a large graph washes out to white."}
                 </p>
               </>
             )}
 
             {tab === "colors" && (
               <>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-ink-soft uppercase tracking-widest">
-                    Node labels
-                  </span>
+                <div className="flex items-center justify-between gap-2">
+                  <ThemeScope stage={stage} />
                   <button
-                    onClick={() => setView({ labelColors: {} })}
+                    onClick={() => setDisplay({ labelColors: {} })}
                     className="text-[10px] text-primary/70 hover:text-primary transition-colors disabled:opacity-30"
-                    disabled={Object.keys(view.labelColors).length === 0}
+                    disabled={Object.keys(appearance.labelColors).length === 0}
                   >
-                    Reset
+                    Reset colors
                   </button>
                 </div>
                 {sortedLabels.length === 0 && (
@@ -372,16 +403,20 @@ export function SettingsMenu({
                 )}
                 <div className="space-y-1.5">
                   {sortedLabels.map((label) => {
-                    const overridden = view.labelColors[label] !== undefined;
-                    const value = view.labelColors[label] ?? defaultColorForLabel(label);
+                    const overridden = appearance.labelColors[label] !== undefined;
+                    const value =
+                      appearance.labelColors[label] ?? defaultColorForLabel(label);
                     return (
                       <div key={label} className="flex items-center gap-2">
                         <input
                           type="color"
                           value={normalizeForPicker(value)}
                           onChange={(e) =>
-                            setView({
-                              labelColors: { ...view.labelColors, [label]: e.target.value },
+                            setDisplay({
+                              labelColors: {
+                                ...appearance.labelColors,
+                                [label]: e.target.value,
+                              },
                             })
                           }
                           className="w-6 h-6 rounded border border-border/60 bg-transparent cursor-pointer shrink-0"
@@ -393,9 +428,9 @@ export function SettingsMenu({
                         {overridden && (
                           <button
                             onClick={() => {
-                              const next = { ...view.labelColors };
+                              const next = { ...appearance.labelColors };
                               delete next[label];
-                              setView({ labelColors: next });
+                              setDisplay({ labelColors: next });
                             }}
                             className="text-[9px] text-ink-dim hover:text-foreground/70 transition-colors shrink-0"
                             title="Back to the palette default"
@@ -408,8 +443,10 @@ export function SettingsMenu({
                   })}
                 </div>
                 <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
-                  Defaults are the built-in palette; unknown labels get a stable
-                  generated hue. Custom colors skip the contrast checks.
+                  Stored per theme — a colour that works on the void does not
+                  necessarily work on paper. Defaults are the built-in palette;
+                  unknown labels get a stable generated hue. Custom colors skip
+                  the contrast checks.
                 </p>
               </>
             )}
@@ -446,24 +483,25 @@ export function SettingsMenu({
                 />
                 <SelectRow<PathLightColorMode>
                   label="Light color"
-                  value={view.pathLightColorMode}
+                  value={appearance.pathLightColorMode}
                   options={[
                     { value: "strand", label: "follow the strand" },
                     { value: "theme", label: "theme accent" },
                     { value: "custom", label: "fixed color" },
                   ]}
-                  onChange={(pathLightColorMode) => setView({ pathLightColorMode })}
+                  onChange={(pathLightColorMode) => setDisplay({ pathLightColorMode })}
                 />
-                {view.pathLightColorMode === "custom" && (
+                {appearance.pathLightColorMode === "custom" && (
                   <>
                     <div className="flex flex-wrap gap-1.5">
                       {PATH_LIGHT_PRESETS.map((preset) => {
                         const active =
-                          view.pathLightColor.toLowerCase() === preset.color.toLowerCase();
+                          appearance.pathLightColor.toLowerCase() ===
+                          preset.color.toLowerCase();
                         return (
                           <button
                             key={preset.color}
-                            onClick={() => setView({ pathLightColor: preset.color })}
+                            onClick={() => setDisplay({ pathLightColor: preset.color })}
                             title={preset.name}
                             aria-label={preset.name}
                             aria-pressed={active}
@@ -483,8 +521,8 @@ export function SettingsMenu({
                       </span>
                       <input
                         type="color"
-                        value={normalizeForPicker(view.pathLightColor)}
-                        onChange={(e) => setView({ pathLightColor: e.target.value })}
+                        value={normalizeForPicker(appearance.pathLightColor)}
+                        onChange={(e) => setDisplay({ pathLightColor: e.target.value })}
                         className="w-6 h-6 rounded border border-border/60 bg-transparent cursor-pointer"
                         aria-label="Path light color"
                       />
@@ -495,7 +533,8 @@ export function SettingsMenu({
                   Selecting a node sends a light down its containment chain from
                   the outermost ancestor, then forks it along that node's own
                   references. Following the strand tints the light with whatever
-                  it is currently crossing, so the hops stay distinguishable.
+                  it is currently crossing, so the hops stay distinguishable. The
+                  colour is stored per theme; the speed and style are shared.
                 </p>
               </>
             )}

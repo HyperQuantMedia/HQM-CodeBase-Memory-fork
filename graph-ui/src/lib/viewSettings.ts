@@ -1,10 +1,11 @@
-/* View, animation, and colour preferences.
+/* View and animation preferences that are the same in both themes.
  *
- * Sibling to density.ts's DisplaySettings, deliberately separate: that one is
- * about density compensation (edge/glow/bloom multipliers layered on automatic
- * scaling), this one is about which projection is on screen, whether the path
- * light runs, and per-label colour overrides. Different concerns, different
- * storage key, so a schema change to one never invalidates the other. */
+ * Sibling to lib/appearance.ts, deliberately separate. Anything whose right value
+ * depends on whether the stage is dark or light — contrast, node size, colours —
+ * lives there, stored per theme. What lives here is theme-independent: which
+ * projection is on screen, the camera's field of view and orbit, whether the path
+ * light runs and how fast. Separate storage keys, so a schema change to one never
+ * invalidates the other. */
 
 import {
   DEFAULT_LAYOUT_PARAMS,
@@ -17,30 +18,6 @@ import {
 } from "./viewLayout";
 
 export type PathLightStyle = "comet" | "dots";
-
-/* Where the light takes its colour.
- *
- * "strand" is the default because the graph already colours every edge by type
- * and every node by degree, and a single fixed light throws that away — the
- * interesting thing about a traversal is *what kind* of link each hop is. In
- * strand mode the head picks up the colour of the segment it is currently
- * crossing and cross-fades on the way, so an IMPORTS hop and a CALLS hop are
- * distinguishable while the light is moving. */
-export type PathLightColorMode = "strand" | "theme" | "custom";
-
-/* Ready-made light colours. The picker stays for anything else — these exist
- * because hunting for a good value in an OS colour dialog is the slow way to
- * answer "what else could this look like". */
-export const PATH_LIGHT_PRESETS: { name: string; color: string }[] = [
-  { name: "North star", color: "#ffce6e" },
-  { name: "Ion", color: "#67e8f9" },
-  { name: "Magenta", color: "#f472b6" },
-  { name: "Emerald", color: "#34d399" },
-  { name: "Ember", color: "#fb7185" },
-  { name: "Violet", color: "#a78bfa" },
-  { name: "Signal white", color: "#f8fafc" },
-  { name: "Deep teal", color: "#0e7490" },
-];
 
 /* "idle" is the original showpiece — start orbiting after a minute untouched.
  * The toolbar toggle switches to an explicit "on"/"off" so the user can start or
@@ -59,14 +36,8 @@ export interface ViewSettings {
   pathLightStyle: PathLightStyle;
   /** Travel speed multiplier. */
   pathLightSpeed: number;
-  /** Where the light's colour comes from. */
-  pathLightColorMode: PathLightColorMode;
-  /** The colour used when the mode is "custom". */
-  pathLightColor: string;
   /** Speed up per containment level already passed. Off by default. */
   pathLightAccel: boolean;
-  /** Per-label colour overrides; absent label = palette default. */
-  labelColors: Record<string, string>;
 }
 
 export const DEFAULT_VIEW_SETTINGS: ViewSettings = {
@@ -77,12 +48,9 @@ export const DEFAULT_VIEW_SETTINGS: ViewSettings = {
   pathLight: true,
   pathLightStyle: "comet",
   pathLightSpeed: 1,
-  pathLightColorMode: "strand",
-  pathLightColor: "#ffce6e",
   /* Off by default: it is a flourish, and on a deep corpus the light arrives
    * before the eye has followed it. Opt in from Settings → Animation. */
   pathLightAccel: false,
-  labelColors: {},
 };
 
 export const VIEW_LIMITS = {
@@ -105,13 +73,6 @@ function clampNum(
   return Math.min(range.max, Math.max(range.min, n));
 }
 
-/* Only #rgb / #rrggbb survive — an override is written straight into inline
- * styles and a THREE.Color, so anything else is dropped rather than trusted. */
-function cleanColor(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  return /^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(value) ? value : null;
-}
-
 export function clampViewSettings(raw: unknown): ViewSettings {
   const r = (typeof raw === "object" && raw !== null ? raw : {}) as Partial<
     Record<keyof ViewSettings, unknown>
@@ -123,14 +84,6 @@ export function clampViewSettings(raw: unknown): ViewSettings {
   const mode = VIEW_MODES.includes(r.mode as ViewMode)
     ? (r.mode as ViewMode)
     : DEFAULT_VIEW_SETTINGS.mode;
-
-  const labelColors: Record<string, string> = {};
-  if (typeof r.labelColors === "object" && r.labelColors !== null) {
-    for (const [label, value] of Object.entries(r.labelColors)) {
-      const c = cleanColor(value);
-      if (c) labelColors[label] = c;
-    }
-  }
 
   return {
     mode,
@@ -163,18 +116,10 @@ export function clampViewSettings(raw: unknown): ViewSettings {
       VIEW_LIMITS.pathLightSpeed,
       DEFAULT_VIEW_SETTINGS.pathLightSpeed,
     ),
-    pathLightColorMode:
-      r.pathLightColorMode === "theme" ||
-      r.pathLightColorMode === "custom" ||
-      r.pathLightColorMode === "strand"
-        ? r.pathLightColorMode
-        : DEFAULT_VIEW_SETTINGS.pathLightColorMode,
-    pathLightColor: cleanColor(r.pathLightColor) ?? DEFAULT_VIEW_SETTINGS.pathLightColor,
     pathLightAccel:
       typeof r.pathLightAccel === "boolean"
         ? r.pathLightAccel
         : DEFAULT_VIEW_SETTINGS.pathLightAccel,
-    labelColors,
   };
 }
 

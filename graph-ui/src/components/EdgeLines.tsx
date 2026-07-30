@@ -2,12 +2,7 @@ import { useMemo } from "react";
 import * as THREE from "three";
 import type { GraphNode, GraphEdge } from "../lib/types";
 import { edgeIntensityScale, edgeCurveSegments } from "../lib/density";
-import {
-  compositeOver,
-  edgeAlphaForLight,
-  inkEdge,
-  type Stage,
-} from "../lib/sceneInk";
+import { inkEdge, multiplyTint, type Stage } from "../lib/sceneInk";
 
 interface EdgeLinesProps {
   nodes: GraphNode[];
@@ -21,8 +16,6 @@ interface EdgeLinesProps {
   curve?: number;
   /* Emission on darkness vs ink on paper — see lib/sceneInk.ts. */
   stage?: Stage;
-  /* Canvas colour, needed on the light stage to composite line alpha. */
-  background?: string;
   /* When set, edge.target is looked up in this array instead of `nodes`.
    * Used for cross-galaxy edges where source lives in the primary graph
    * and target lives in a linked project's offset-adjusted nodes. */
@@ -91,17 +84,22 @@ export function EdgeLines({
   brightness = 1.0,
   curve = 0,
   stage = "dark",
-  background = "#06090f",
   targetNodes,
 }: EdgeLinesProps) {
   const geometry = useMemo(() => {
     /* Shrink per-edge glow as the edge count grows so the additively-blended
-     * center doesn't saturate to white; the user multiplier rides on top. */
-    const densityScale = edgeIntensityScale(edges.length) * brightness;
+     * center doesn't saturate to white; the user multiplier rides on top.
+     *
+     * Multiply accumulates the same way additive does, so the compensation still
+     * applies on the light stage — but its square root is taken there, because
+     * ink starting from white has much less headroom than glow starting from
+     * black: at 163k edges the dark scale is 0.12, which multiplied onto paper is
+     * a 1% tint per line and reads as nothing. */
+    const rawScale = edgeIntensityScale(edges.length);
+    const densityScale =
+      (stage === "light" ? Math.sqrt(rawScale) : rawScale) * brightness;
     const light = stage === "light";
     const table = colorTable(stage);
-    const bgColor = new THREE.Color(background);
-    const bg: [number, number, number] = [bgColor.r, bgColor.g, bgColor.b];
 
     /* Subdivisions per edge. 1 means a straight chord — the original two-vertex
      * form — so the un-curved path costs exactly what it always did. */
@@ -160,7 +158,13 @@ export function EdgeLines({
       const base = table.get(edge.type) ?? table.get("")!;
       let cr: number, cg: number, cb: number;
       if (light) {
-        const [r, g, bl] = compositeOver(base, edgeAlphaForLight(intensity), bg);
+        /* Multiply blending: white leaves the paper alone, the edge colour marks
+         * it, and overlapping links darken each other — the ink mirror of the
+         * dark stage's additive glow. */
+        /* MultiplyBlending's equation is dst*src — alpha takes no part in it, so
+         * material.opacity is inert here. The linked-project fade is folded into
+         * the tint instead, which is the same result by a different route. */
+        const [r, g, bl] = multiplyTint(base, intensity * opacity);
         cr = r; cg = g; cb = bl;
       } else {
         cr = base[0] * intensity;
@@ -240,7 +244,7 @@ export function EdgeLines({
       new THREE.BufferAttribute(colors.slice(0, vertex * 3), 3),
     );
     return geo;
-  }, [nodes, edges, highlightedIds, targetNodes, brightness, curve, stage, background]);
+  }, [nodes, edges, highlightedIds, targetNodes, brightness, curve, stage, opacity]);
 
   const light = stage === "light";
   return (
@@ -248,10 +252,11 @@ export function EdgeLines({
       <lineBasicMaterial
         vertexColors
         transparent
-        opacity={opacity}
-        /* Additive accumulates glow on black and is a no-op on white — the light
-         * stage pre-composites its alpha instead (see lib/sceneInk.ts). */
-        blending={light ? THREE.NormalBlending : THREE.AdditiveBlending}
+        opacity={light ? 1 : opacity}
+        /* Additive accumulates glow on black and is a no-op on white; multiply is
+         * its mirror on paper, accumulating toward ink. Straight alpha was the
+         * wrong middle ground — invisible when faint, a flat wash when not. */
+        blending={light ? THREE.MultiplyBlending : THREE.AdditiveBlending}
         depthWrite={false}
         toneMapped={false}
       />

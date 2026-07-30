@@ -3,7 +3,7 @@ import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { GraphNode } from "../lib/types";
 import { nodeGlowBoost } from "../lib/density";
-import { inkNode, type Stage } from "../lib/sceneInk";
+import { lightNodeInk, type Stage } from "../lib/sceneInk";
 
 interface NodeCloudProps {
   nodes: GraphNode[];
@@ -16,6 +16,9 @@ interface NodeCloudProps {
   boost?: number;
   /* Emission on darkness vs ink on paper — see lib/sceneInk.ts. */
   stage?: Stage;
+  /* Node radius multiplier. The light stage runs without bloom, and the bloom
+   * corona is most of a node's apparent size on the dark stage. */
+  scale?: number;
 }
 
 /* Above this count instanced spheres stop paying off (vertex + matrix cost)
@@ -47,13 +50,9 @@ function nodeColor(
    * node also has to fade it *toward the background* here rather than toward
    * black, or the nodes meant to recede become the darkest marks on screen. */
   if (stage === "light") {
-    const [lr, lg, lb] = inkNode(tempColor.r, tempColor.g, tempColor.b);
-    const dim = hasHighlight && !highlightedIds.has(node.id) ? 0.22 : 1;
-    return [
-      (1 - (1 - lr) * dim) * opacity,
-      (1 - (1 - lg) * dim) * opacity,
-      (1 - (1 - lb) * dim) * opacity,
-    ];
+    const dimmed = Boolean(hasHighlight) && !highlightedIds!.has(node.id);
+    const [lr, lg, lb] = lightNodeInk(tempColor.r, tempColor.g, tempColor.b, dimmed);
+    return [lr * opacity, lg * opacity, lb * opacity];
   }
 
   if (hasHighlight && !highlightedIds.has(node.id)) {
@@ -102,6 +101,7 @@ function NodePoints({
   opacity,
   boost,
   stage,
+  scale,
 }: Required<NodeCloudProps>) {
   const { raycaster } = useThree();
 
@@ -162,7 +162,7 @@ function NodePoints({
       </bufferGeometry>
       <pointsMaterial
         vertexColors
-        size={4}
+        size={4 * scale}
         sizeAttenuation
         map={getPointSprite()}
         alphaTest={0.35}
@@ -183,6 +183,7 @@ function NodeSpheres({
   opacity,
   boost,
   stage,
+  scale,
 }: Required<NodeCloudProps>) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const tempObj = useMemo(() => new THREE.Object3D(), []);
@@ -220,14 +221,14 @@ function NodeSpheres({
       const n = nodes[i];
       tempObj.position.set(n.x, n.y, n.z);
       const isHighlighted = !hasHighlight || highlightedIds.has(n.id);
-      const s = n.size * (isHighlighted ? 0.5 : 0.2);
+      const s = n.size * (isHighlighted ? 0.5 : 0.2) * scale;
       tempObj.scale.set(s, s, s);
       tempObj.updateMatrix();
       mesh.setMatrixAt(i, tempObj.matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [nodes, highlightedIds, tempObj]);
+  }, [nodes, highlightedIds, tempObj, scale]);
 
   return (
     <instancedMesh
@@ -268,6 +269,7 @@ export function NodeCloud({
   opacity = 1.0,
   boost = 1.0,
   stage = "dark",
+  scale = 1,
 }: NodeCloudProps) {
   if (nodes.length > POINT_MODE_THRESHOLD) {
     return (
@@ -279,6 +281,7 @@ export function NodeCloud({
         opacity={opacity}
         boost={boost}
         stage={stage}
+        scale={scale}
       />
     );
   }
@@ -291,6 +294,7 @@ export function NodeCloud({
       opacity={opacity}
       boost={boost}
       stage={stage}
+      scale={scale}
     />
   );
 }

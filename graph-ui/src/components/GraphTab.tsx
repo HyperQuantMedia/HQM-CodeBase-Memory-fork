@@ -10,10 +10,12 @@ import {
 import { GraphLoader } from "./GraphLoader";
 import { SettingsMenu } from "./SettingsMenu";
 import {
-  loadDisplaySettings,
-  saveDisplaySettings,
-  type DisplaySettings,
-} from "../lib/density";
+  APPEARANCE_DEFAULTS,
+  loadAppearances,
+  saveAppearances,
+  type Appearance,
+  type AppearanceSet,
+} from "../lib/appearance";
 import {
   loadViewSettings,
   saveViewSettings,
@@ -105,24 +107,17 @@ export function GraphTab({ project }: GraphTabProps) {
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
   const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
   const [showLabels, setShowLabels] = useState(true);
-  const [display, setDisplay] = useState<DisplaySettings>(() =>
-    loadDisplaySettings(),
+  /* Both themes' appearance settings are held at once, and the active one is
+   * picked by stage below. Keeping both in state (rather than reloading on every
+   * theme flip) means switching theme and switching back is lossless even before
+   * anything is persisted. */
+  const [appearances, setAppearances] = useState<AppearanceSet>(() =>
+    loadAppearances(),
   );
-  const updateDisplay = useCallback((next: DisplaySettings) => {
-    setDisplay(next);
-    saveDisplaySettings(next);
-  }, []);
   const [view, setView] = useState<ViewSettings>(() => loadViewSettings());
   const updateView = useCallback((next: ViewSettings) => {
     setView(next);
     saveViewSettings(next);
-    setLabelColorOverrides(next.labelColors);
-  }, []);
-  /* Colour overrides live in module state so non-React callers see them too —
-   * install the persisted set once at mount. */
-  useEffect(() => {
-    setLabelColorOverrides(view.labelColors);
-    /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, []);
 
   const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
@@ -136,6 +131,28 @@ export function GraphTab({ project }: GraphTabProps) {
   /* The 3D scene is not just differently-coloured between themes, it is a
      different rendering model — see lib/sceneInk.ts. */
   const stage = useMemo(() => stageForTheme(resolvedTheme()), [themeTick]);
+
+  const appearance = appearances[stage] ?? APPEARANCE_DEFAULTS[stage];
+  const updateAppearance = useCallback(
+    (next: Appearance) => {
+      setAppearances((prev) => {
+        const merged = { ...prev, [stage]: next };
+        saveAppearances(merged);
+        return merged;
+      });
+    },
+    [stage],
+  );
+  const resetAppearance = useCallback(() => {
+    updateAppearance({ ...APPEARANCE_DEFAULTS[stage], labelColors: {} });
+  }, [stage, updateAppearance]);
+
+  /* Label colour overrides live in module state so non-React callers (colors.ts's
+   * colorForLabel, reached from render paths and plain functions alike) see them
+   * too. They are per-theme now, so this has to re-run on a theme flip. */
+  useEffect(() => {
+    setLabelColorOverrides(appearance.labelColors);
+  }, [appearance.labelColors]);
   const canvasBg = useMemo(
     () => themeVar("--color-canvas", stage === "light" ? "#f2f4fa" : "#06090f"),
     [themeTick, stage],
@@ -313,11 +330,11 @@ export function GraphTab({ project }: GraphTabProps) {
   /* "" means "follow the strands" — PathLight then takes each hop's colour from
      the graph instead of a fixed value. */
   const pathLightColor =
-    view.pathLightColorMode === "strand"
+    appearance.pathLightColorMode === "strand"
       ? ""
-      : view.pathLightColorMode === "theme"
+      : appearance.pathLightColorMode === "theme"
         ? themeVar("--color-primary", "#ffce6e")
-        : view.pathLightColor;
+        : appearance.pathLightColor;
 
   const labelsInGraph = useMemo(
     () => (data ? [...new Set(data.nodes.map((n) => n.label))] : []),
@@ -328,7 +345,7 @@ export function GraphTab({ project }: GraphTabProps) {
     if (!viewData || !project) return;
     const labelColors: Record<string, string> = {};
     for (const label of new Set(viewData.nodes.map((n) => n.label))) {
-      labelColors[label] = view.labelColors[label] ?? colorForLabel(label);
+      labelColors[label] = appearance.labelColors[label] ?? colorForLabel(label);
     }
     downloadStaticPage({
       project,
@@ -338,7 +355,7 @@ export function GraphTab({ project }: GraphTabProps) {
       labelColors,
       generatedAt: new Date().toISOString(),
     });
-  }, [viewData, project, view.labelColors]);
+  }, [viewData, project, appearance.labelColors]);
 
   /* Re-read the persisted budget when the project changes… */
   useEffect(() => {
@@ -546,7 +563,12 @@ export function GraphTab({ project }: GraphTabProps) {
               return !v;
             })
           }
-          className={foldersOpen ? "flex-1" : "shrink-0"}
+          /* `mt-auto` is what makes this fold *downward*: collapsed, the flex
+              column's free space is pushed above the header, so the strip lands on
+              the bottom edge instead of riding up under Filters. */
+          className={
+            foldersOpen ? "flex-1 min-h-0" : "shrink-0 mt-auto border-t border-border/40"
+          }
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
               {filteredData.nodes.length.toLocaleString()}
@@ -591,7 +613,7 @@ export function GraphTab({ project }: GraphTabProps) {
                 highlightedIds={highlightedIds}
                 cameraTarget={cameraTarget}
                 showLabels={showLabels}
-                display={display}
+                display={appearance}
                 onNodeClick={handleNodeClick}
                 fov={view.fov}
                 lightPath={lightPath}
@@ -602,7 +624,7 @@ export function GraphTab({ project }: GraphTabProps) {
                 pathLightColor={pathLightColor}
                 pathLightAccel={view.pathLightAccel}
                 stage={stage}
-                edgeCurve={display.edgeCurve}
+                edgeCurve={appearance.edgeCurve}
                 background={canvasBg}
               />
             </ErrorBoundary>
@@ -674,8 +696,10 @@ export function GraphTab({ project }: GraphTabProps) {
                 />
               </div>
               <SettingsMenu
-                display={display}
-                onDisplayChange={updateDisplay}
+                stage={stage}
+                appearance={appearance}
+                onAppearanceChange={updateAppearance}
+                onAppearanceReset={resetAppearance}
                 view={view}
                 onViewChange={updateView}
                 labels={labelsInGraph}

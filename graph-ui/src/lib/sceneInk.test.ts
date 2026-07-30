@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { edgeIntensityScale } from "./density";
+import { APPEARANCE_DEFAULTS } from "./appearance";
 import {
   bloomEnabled,
-  compositeOver,
-  edgeAlphaForLight,
   hslToRgb,
   inkEdge,
   inkNode,
+  lightNodeInk,
+  multiplyTint,
   rgbToHsl,
   stageForTheme,
 } from "./sceneInk";
@@ -97,43 +99,64 @@ describe("inkNode", () => {
   });
 });
 
-describe("edgeAlphaForLight", () => {
-  it("lifts the additive intensity range onto a visible alpha range", () => {
-    /* Additive intensities sit at 0.04–0.5 because they are meant to accumulate.
-     * Composited at face value they would be all but invisible. */
-    expect(edgeAlphaForLight(0.06)).toBeGreaterThan(0.15);
-    expect(edgeAlphaForLight(0.5)).toBeGreaterThan(0.5);
+describe("multiplyTint", () => {
+  const green: [number, number, number] = [0.05, 0.31, 0.15];
+
+  it("is white at zero and the colour itself at full", () => {
+    /* Multiply blending needs white for "leave the paper alone" — that is the
+     * whole reason the mapping is a tint toward white rather than an alpha. */
+    expect(multiplyTint(green, 0)).toEqual([1, 1, 1]);
+    const full = multiplyTint(green, 1);
+    expect(full[0]).toBeCloseTo(green[0], 6);
+    expect(full[1]).toBeCloseTo(green[1], 6);
+    expect(full[2]).toBeCloseTo(green[2], 6);
   });
 
-  it("stays inside bounds and preserves ordering", () => {
-    expect(edgeAlphaForLight(0)).toBeGreaterThanOrEqual(0);
-    expect(edgeAlphaForLight(10)).toBeLessThanOrEqual(1);
-    expect(edgeAlphaForLight(-1)).toBeGreaterThanOrEqual(0);
-    expect(edgeAlphaForLight(0.4)).toBeGreaterThan(edgeAlphaForLight(0.1));
+  it("darkens monotonically with intensity", () => {
+    expect(lum(multiplyTint(green, 0.6))).toBeLessThan(lum(multiplyTint(green, 0.2)));
+  });
+
+  it("accumulates when tints are multiplied, the way glow accumulates on dark", () => {
+    /* Two overlapping links must be darker than one. This is the property a
+     * straight alpha composite cannot provide: with normal blending the last line
+     * drawn simply wins the pixel, so density stops reading as density. */
+    const one = multiplyTint(green, 0.15);
+    const two: [number, number, number] = [
+      one[0] * one[0],
+      one[1] * one[1],
+      one[2] * one[2],
+    ];
+    expect(lum(two)).toBeLessThan(lum(one));
+    expect(lum(one)).toBeLessThan(1);
+  });
+
+  it("clamps an out-of-range intensity", () => {
+    expect(multiplyTint(green, -3)).toEqual([1, 1, 1]);
+    const over = multiplyTint(green, 9);
+    expect(over[1]).toBeCloseTo(green[1], 6);
   });
 });
 
-describe("compositeOver", () => {
-  const bg: [number, number, number] = [0.95, 0.96, 0.98];
-
-  it("is the background at zero alpha and the colour at full", () => {
-    expect(compositeOver([0.1, 0.2, 0.3], 0, bg)).toEqual(bg);
-    const full = compositeOver([0.1, 0.2, 0.3], 1, bg);
-    expect(full[0]).toBeCloseTo(0.1, 6);
-    expect(full[1]).toBeCloseTo(0.2, 6);
-    expect(full[2]).toBeCloseTo(0.3, 6);
+describe("lightNodeInk", () => {
+  it("keeps a dimmed node visible against paper", () => {
+    /* The bug this pins: a selection of 8 nodes out of 47,000 faded the other
+     * 46,992 to 78% of the way to white, i.e. erased the graph. Mirroring the dark
+     * stage's 0.15 multiplier does not work on paper, because dark-on-light loses
+     * legibility far faster than light-on-dark. */
+    const dimmed = lightNodeInk(0.502, 0.627, 1, true);
+    expect(PAPER - lum(dimmed)).toBeGreaterThan(0.15);
   });
 
-  it("moves toward the colour monotonically", () => {
-    const a = compositeOver([0, 0, 0], 0.25, bg);
-    const b = compositeOver([0, 0, 0], 0.75, bg);
-    expect(lum(b)).toBeLessThan(lum(a));
-    expect(lum(a)).toBeLessThan(lum(bg));
+  it("leaves a selected node at full ink", () => {
+    const c = [0.502, 0.627, 1] as const;
+    expect(lightNodeInk(c[0], c[1], c[2], false)).toEqual(inkNode(c[0], c[1], c[2]));
   });
 
-  it("clamps an out-of-range alpha instead of overshooting", () => {
-    expect(lum(compositeOver([0, 0, 0], 5, bg))).toBeCloseTo(0, 6);
-    expect(compositeOver([0, 0, 0], -5, bg)).toEqual(bg);
+  it("still separates dimmed from selected", () => {
+    const c = [1, 0.376, 0.314] as const;
+    expect(lum(lightNodeInk(c[0], c[1], c[2], true))).toBeGreaterThan(
+      lum(lightNodeInk(c[0], c[1], c[2], false)),
+    );
   });
 });
 
@@ -155,5 +178,50 @@ describe("bloomEnabled", () => {
      * frame, so no threshold excludes it — the pass floods rather than haloes. */
     expect(bloomEnabled("light")).toBe(false);
     expect(bloomEnabled("dark")).toBe(true);
+  });
+});
+
+describe("the light stage at a real corpus density", () => {
+  /* End-to-end on the numbers, because reasoning about this chain has been wrong
+   * twice. 163,411 edges is the measured p4 count; the question is whether one
+   * link actually marks the page once the density compensation, the light-stage
+   * softening and the theme's own brightness default have all been applied. */
+  const EDGES = 163_411;
+
+  function tintFor(intensity: number): [number, number, number] {
+    const raw = edgeIntensityScale(EDGES);
+    const scale = Math.sqrt(raw) * APPEARANCE_DEFAULTS.light.edgeBrightness;
+    /* CONTAINS_* green, the most common link type in a code corpus. */
+    const base = inkEdge(0.133, 0.773, 0.369);
+    return multiplyTint(base, intensity * scale);
+  }
+
+  it("marks the page visibly for an intra-cluster link", () => {
+    /* 0.25 is EdgeLines' same-cluster intensity. Anything under a few percent of
+     * darkening is the failure mode the user reported: a blank white rectangle. */
+    const t = tintFor(0.25);
+    expect(1 - lum(t)).toBeGreaterThan(0.06);
+  });
+
+  it("still leaves a cross-cluster link faint rather than invisible", () => {
+    const t = tintFor(0.06);
+    const ink = 1 - lum(t);
+    expect(ink).toBeGreaterThan(0.01);
+    expect(ink).toBeLessThan(1 - lum(tintFor(0.25)));
+  });
+
+  it("would have been invisible without the light-stage softening", () => {
+    /* Sharing the dark stage's compensation and brightness — what shipped first —
+     * gives a fraction of a percent per line, i.e. nothing. */
+    const shared = edgeIntensityScale(EDGES) * APPEARANCE_DEFAULTS.dark.edgeBrightness;
+    const base = inkEdge(0.133, 0.773, 0.369);
+    expect(1 - lum(multiplyTint(base, 0.25 * shared))).toBeLessThan(0.03);
+  });
+
+  it("keeps a selected link far stronger than the dimmed bulk", () => {
+    /* A selection is never density-scaled, so the contrast that makes a selection
+     * readable does not depend on the corpus size. */
+    const selected = multiplyTint(inkEdge(0.133, 0.773, 0.369), 0.5);
+    expect(1 - lum(selected)).toBeGreaterThan(3 * (1 - lum(tintFor(0.06))));
   });
 });

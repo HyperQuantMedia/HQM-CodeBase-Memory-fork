@@ -10,12 +10,11 @@ import { NodeLabels } from "./NodeLabels";
 import { NodeTooltip } from "./NodeTooltip";
 import { PathLight } from "./PathLight";
 import type { GraphData, GraphNode, LinkedProject } from "../lib/types";
+import { bloomIntensityScale, nodeBoostScale } from "../lib/density";
 import {
-  DEFAULT_DISPLAY_SETTINGS,
-  bloomIntensityScale,
-  nodeBoostScale,
-  type DisplaySettings,
-} from "../lib/density";
+  APPEARANCE_DEFAULTS,
+  type Appearance,
+} from "../lib/appearance";
 import type { AutoRotate, PathLightStyle } from "../lib/viewSettings";
 import { bloomEnabled, type Stage } from "../lib/sceneInk";
 
@@ -144,7 +143,7 @@ interface GraphSceneProps {
   highlightedIds: Set<number> | null;
   cameraTarget: CameraTarget | null;
   showLabels: boolean;
-  display?: DisplaySettings;
+  display?: Appearance;
   onNodeClick: (node: GraphNode) => void;
   /** Camera field of view, degrees (Settings → View). */
   fov?: number;
@@ -187,7 +186,7 @@ export function GraphScene({
   highlightedIds,
   cameraTarget,
   showLabels,
-  display = DEFAULT_DISPLAY_SETTINGS,
+  display = APPEARANCE_DEFAULTS.dark,
   onNodeClick,
   fov = 50,
   lightPath,
@@ -239,7 +238,6 @@ export function GraphScene({
         brightness={display.edgeBrightness}
         curve={edgeCurve}
         stage={stage}
-        background={background}
       />
       <NodeCloud
         nodes={data.nodes}
@@ -247,6 +245,7 @@ export function GraphScene({
         onHover={setHovered}
         onClick={onNodeClick}
         boost={nodeBoost}
+        scale={display.nodeScale}
         stage={stage}
       />
       {showLabels && (
@@ -275,7 +274,6 @@ export function GraphScene({
               brightness={display.edgeBrightness}
               curve={edgeCurve}
               stage={stage}
-              background={background}
             />
             <NodeCloud
               nodes={offsetNodes}
@@ -284,6 +282,7 @@ export function GraphScene({
               onClick={onNodeClick}
               opacity={0.5}
               boost={nodeBoost}
+              scale={display.nodeScale}
               stage={stage}
             />
             {/* Inter-galaxy CROSS_* edges: source is in primary, target in
@@ -298,7 +297,6 @@ export function GraphScene({
                 brightness={display.edgeBrightness}
                 curve={edgeCurve}
                 stage={stage}
-                background={background}
               />
             )}
           </group>

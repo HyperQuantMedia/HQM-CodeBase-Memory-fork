@@ -4,8 +4,6 @@ import {
   bloomIntensityScale,
   nodeBoostScale,
   nodeGlowBoost,
-  clampDisplaySettings,
-  DEFAULT_DISPLAY_SETTINGS,
   EDGE_REFERENCE_COUNT,
   NODE_REFERENCE_COUNT,
 } from "./density";
@@ -95,14 +93,3 @@ describe("nodeGlowBoost", () => {
   });
 });
 
-describe("clampDisplaySettings", () => {
-  it("clamps each setting to its range and fills defaults", () => {
-    expect(clampDisplaySettings({})).toEqual(DEFAULT_DISPLAY_SETTINGS);
-    expect(
-      clampDisplaySettings({ edgeBrightness: 99, nodeGlow: -5, bloom: 1.5 }),
-    ).toEqual({ edgeBrightness: 3, nodeGlow: 0, bloom: 1.5, edgeCurve: 0.35 });
-    expect(clampDisplaySettings({ bloom: Number.NaN }).bloom).toBe(
-      DEFAULT_DISPLAY_SETTINGS.bloom,
-    );
-  });
-});

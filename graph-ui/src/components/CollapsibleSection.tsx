@@ -26,7 +26,10 @@ export function CollapsibleSection({
   className = "",
 }: CollapsibleSectionProps) {
   return (
-    <div className={`flex flex-col min-h-0 ${className}`}>
+    /* data-collapsible is a stable hook for tests: the layout class that
+       decides where a collapsed section sits lives on this wrapper, several
+       levels above the header button. */
+    <div data-collapsible={open ? "open" : "closed"} className={`flex flex-col min-h-0 ${className}`}>
       <div className="flex items-center justify-between gap-2 px-3 py-2 shrink-0">
         <button
           onClick={onToggle}

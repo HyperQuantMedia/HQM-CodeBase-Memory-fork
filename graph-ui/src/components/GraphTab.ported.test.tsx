@@ -102,6 +102,57 @@ describe("collapsible sidebar panels", () => {
     /* Filters untouched. */
     expect(screen.getByText("Node types")).toBeInTheDocument();
   });
+
+  it("folds Folders down to the bottom of the column, not up under Filters", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    const header = await screen.findByRole("button", { name: /Folders/ });
+    /* `section` is the CollapsibleSection wrapper that carries the layout class. */
+    const section = header.closest("[data-collapsible]") ?? header.parentElement!;
+    expect(section.className).not.toContain("mt-auto");
+
+    fireEvent.click(header);
+    const collapsed =
+      screen.getByRole("button", { name: /Folders/ }).closest("[data-collapsible]") ??
+      screen.getByRole("button", { name: /Folders/ }).parentElement!;
+    /* mt-auto is what pushes the flex column's free space above the strip, so a
+     * collapsed Folders lands on the bottom edge instead of riding up. */
+    expect(collapsed.className).toContain("mt-auto");
+  });
+});
+
+describe("per-theme appearance", () => {
+  it("stores appearance under one key split by theme, and resets only that theme", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+
+    fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    fireEvent.click(screen.getByRole("tab", { name: "Display" }));
+    fireEvent.change(screen.getByLabelText(/Node size/), { target: { value: "2.5" } });
+
+    await waitFor(() => {
+      const raw = JSON.parse(localStorage.getItem("cbm-appearance")!);
+      expect(raw.dark.nodeScale).toBe(2.5);
+      /* The other theme is untouched — that is the point of the split. */
+      expect(raw.light.nodeScale).toBe(1.45);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset to defaults" }));
+    await waitFor(() => {
+      const raw = JSON.parse(localStorage.getItem("cbm-appearance")!);
+      expect(raw.dark.nodeScale).toBe(1);
+    });
+  });
+
+  it("hands the scene the active theme's values", async () => {
+    mockFetch();
+    render(<GraphTab project="demo" />);
+    await screen.findByText("Filters");
+    /* jsdom reports no light preference, so the dark bucket is active. */
+    expect(lastScene().stage).toBe("dark");
+    expect((lastScene().display as { nodeScale: number }).nodeScale).toBe(1);
+  });
 });
 
 describe("view modes", () => {
@@ -199,7 +250,14 @@ describe("settings tabs", () => {
     expect(screen.getByLabelText("Projection")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Display" }));
-    expect(screen.getByLabelText(/Edge brightness/)).toBeInTheDocument();
+    /* jsdom reports no light preference, so the dark stage's wording applies. */
+    expect(screen.getByLabelText(/Link brightness/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Node size/)).toBeInTheDocument();
+    /* Appearance is stored per theme, and the panel says which one it is editing. */
+    expect(screen.getByText("Dark theme")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reset to defaults" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Colors" }));
     /* One colour row per label present in the graph. */

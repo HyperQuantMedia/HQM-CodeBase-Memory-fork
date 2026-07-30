@@ -112,38 +112,67 @@ export function inkNode(r: number, g: number, b: number): [number, number, numbe
 
 /* ── Edge ink ──────────────────────────────────────────────────── */
 
-/* Additive intensities are tuned for accumulation and sit very low (0.06–0.5).
- * Composited rather than added they would be invisible, so the light stage
- * re-maps them onto a usable alpha range before mixing toward the background. */
-export function edgeAlphaForLight(intensity: number): number {
-  return Math.min(0.85, Math.max(0.06, Math.sqrt(Math.max(0, intensity)) * 0.95));
-}
-
-/* An opaque line colour equivalent to drawing `color` at `alpha` over `bg`.
+/* Multiplicative tint for one link on the light stage.
  *
- * Lines are drawn with normal blending and depthWrite off on the light stage, so
- * a later line overwrites an earlier one instead of darkening it. Pre-mixing the
- * background in gives the same result as real alpha for the common case (a line
- * over open canvas) without needing per-vertex alpha, which lineBasicMaterial
- * only supports via a 4-component colour attribute. */
-export function compositeOver(
+ * The light stage draws links with MULTIPLY blending, which is the exact ink
+ * analogue of the dark stage's ADD: on black, overlapping links accumulate toward
+ * white and a single faint one is nearly invisible; on paper, overlapping links
+ * accumulate toward the ink colour and a single faint one barely tints. Both
+ * behaviours are what makes a dense graph read as density rather than as a solid
+ * field — which is exactly what a straight alpha composite gets wrong. With
+ * normal blending and no accumulation, whichever link draws last wins the pixel,
+ * so the choice is between invisible at low alpha and a flat wash of colour at
+ * high alpha, with nothing usable in between. That is what the first light-stage
+ * attempt shipped.
+ *
+ * Multiply needs white for "leave the background alone", so intensity 0 maps to
+ * white and intensity 1 to the link's own colour. */
+export function multiplyTint(
   color: [number, number, number],
-  alpha: number,
-  bg: [number, number, number],
+  intensity: number,
 ): [number, number, number] {
-  const a = Math.min(1, Math.max(0, alpha));
+  const a = Math.min(1, Math.max(0, intensity));
   return [
-    bg[0] + (color[0] - bg[0]) * a,
-    bg[1] + (color[1] - bg[1]) * a,
-    bg[2] + (color[2] - bg[2]) * a,
+    1 - a * (1 - color[0]),
+    1 - a * (1 - color[1]),
+    1 - a * (1 - color[2]),
   ];
 }
 
-/* Darken an edge colour before compositing. The type palette is tuned for glow
- * on black; the same hues at full lightness on paper read as highlighter pen. */
+/* Darken an edge colour before tinting. The type palette is tuned for glow on
+ * black; the same hues at full lightness on paper read as highlighter pen. */
 export function inkEdge(r: number, g: number, b: number): [number, number, number] {
   const [h, s, l] = rgbToHsl(r, g, b);
   return hslToRgb(h, Math.min(1, s * 1.2), Math.min(0.42, l * 0.72));
+}
+
+/* ── Dimming a node that is not in the selection ────────────────── */
+
+/* How far a non-highlighted node moves toward the background, per stage.
+ *
+ * The dark stage multiplies the colour by 0.15, i.e. toward black — which still
+ * leaves a dark-grey dot on a near-black canvas, visible if you look. Doing the
+ * mirror of that on paper (78% of the way to white) leaves nothing at all, and a
+ * selection of 8 nodes out of 47,000 therefore erased the entire graph. Paper
+ * needs a far gentler hand, because dark-on-light loses legibility much faster
+ * than light-on-dark. */
+const LIGHT_DIM = 0.5;
+
+/* Node colour for the light stage: inked, then faded toward the background if it
+ * is outside the current selection. */
+export function lightNodeInk(
+  r: number,
+  g: number,
+  b: number,
+  dimmed: boolean,
+): [number, number, number] {
+  const [ir, ig, ib] = inkNode(r, g, b);
+  if (!dimmed) return [ir, ig, ib];
+  return [
+    1 - (1 - ir) * LIGHT_DIM,
+    1 - (1 - ig) * LIGHT_DIM,
+    1 - (1 - ib) * LIGHT_DIM,
+  ];
 }
 
 /* ── Bloom ─────────────────────────────────────────────────────── */
