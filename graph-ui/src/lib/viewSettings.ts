@@ -17,11 +17,18 @@ import {
 
 export type PathLightStyle = "comet" | "dots";
 
+/* "idle" is the original showpiece — start orbiting after a minute untouched.
+ * The toolbar toggle switches to an explicit "on"/"off" so the user can start or
+ * stop it outright instead of waiting on a timer. */
+export type AutoRotate = "idle" | "on" | "off";
+
 export interface ViewSettings {
   mode: ViewMode;
   layout: LayoutParams;
   /** Camera field of view, degrees. */
   fov: number;
+  /** Idle showpiece, or an explicit start/stop from the toolbar. */
+  autoRotate: AutoRotate;
   /** Path-to-root light on selection. */
   pathLight: boolean;
   pathLightStyle: PathLightStyle;
@@ -37,6 +44,7 @@ export const DEFAULT_VIEW_SETTINGS: ViewSettings = {
   mode: "default",
   layout: DEFAULT_LAYOUT_PARAMS,
   fov: 50,
+  autoRotate: "idle",
   pathLight: true,
   pathLightStyle: "comet",
   pathLightSpeed: 1,
@@ -110,6 +118,10 @@ export function clampViewSettings(raw: unknown): ViewSettings {
       treeDirection,
     },
     fov: clampNum(r.fov, VIEW_LIMITS.fov, DEFAULT_VIEW_SETTINGS.fov),
+    autoRotate:
+      r.autoRotate === "on" || r.autoRotate === "off" || r.autoRotate === "idle"
+        ? r.autoRotate
+        : DEFAULT_VIEW_SETTINGS.autoRotate,
     pathLight:
       typeof r.pathLight === "boolean" ? r.pathLight : DEFAULT_VIEW_SETTINGS.pathLight,
     pathLightStyle: r.pathLightStyle === "dots" ? "dots" : "comet",

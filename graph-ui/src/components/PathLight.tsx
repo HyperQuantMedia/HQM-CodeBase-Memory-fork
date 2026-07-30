@@ -7,6 +7,8 @@ import type { PathLightStyle } from "../lib/viewSettings";
 interface PathLightProps {
   /** Ordered node ids, outermost ancestor → selected node. */
   path: number[];
+  /** Neighbours the light forks out to once it reaches the selection. */
+  forks?: number[];
   nodes: GraphNode[];
   color: string;
   style: PathLightStyle;
@@ -36,30 +38,50 @@ function glowSprite(): THREE.CanvasTexture {
 
 const TRAIL = 7; /* comet: head + tail samples */
 const DOTS = 5; /* dots: evenly spaced markers */
+const MAX_FORKS = 12;
+/* Fork phase length, in the same units as the 0→1 chain run. */
+const FORK_SPAN = 0.55;
+/* Dark beat before the cycle restarts. */
+const REST = 0.25;
 
 /* A light running the containment chain from the corpus root down to the
- * selected node. Ported from the Astra static map's path light: it accelerates
- * at every level it passes, so a deeply nested selection reads as "far away"
- * without needing a distance label.
+ * selected node, then forking along that node's references.
+ *
+ * Ported from the Astra static map: the light accelerates at every level it
+ * passes (so a deeply nested selection reads as "far away" without a label) and
+ * then splits along the node's links. The fork half was missing — the light
+ * arrived at the selection and stopped, so a node's actual relationships never
+ * lit up, which is the interesting part of selecting it.
  *
  * The chain is walked in *world* space each frame rather than baked into
  * geometry, so it keeps working when the view mode reprojects every node. */
-export function PathLight({ path, nodes, color, style, speed }: PathLightProps) {
-  const headsRef = useRef<THREE.Group>(null);
+export function PathLight({
+  path,
+  forks = [],
+  nodes,
+  color,
+  style,
+  speed,
+}: PathLightProps) {
+  const chainRef = useRef<THREE.Group>(null);
+  const forkRef = useRef<THREE.Group>(null);
   const t = useRef(0);
 
-  /* Chain positions + cumulative arc length, so the head moves at a constant
-   * world speed instead of lurching across long segments. */
+  const byId = useMemo(() => {
+    const m = new Map<number, GraphNode>();
+    for (const n of nodes) m.set(n.id, n);
+    return m;
+  }, [nodes]);
+
+  /* Chain positions + per-segment lengths, so the head moves at a constant world
+   * speed instead of lurching across long segments. */
   const chain = useMemo(() => {
-    const byId = new Map<number, GraphNode>();
-    for (const n of nodes) byId.set(n.id, n);
     const pts: THREE.Vector3[] = [];
     for (const id of path) {
       const n = byId.get(id);
       if (n) pts.push(new THREE.Vector3(n.x, n.y, n.z));
     }
     if (pts.length < 2) return null;
-
     const seg: number[] = [];
     let total = 0;
     for (let i = 1; i < pts.length; i++) {
@@ -68,13 +90,27 @@ export function PathLight({ path, nodes, color, style, speed }: PathLightProps) 
       total += d;
     }
     return { pts, seg, total };
-  }, [path, nodes]);
+  }, [path, byId]);
 
-  const count = style === "comet" ? TRAIL : DOTS;
+  /* Where each fork runs: from the selection out to a neighbour. */
+  const forkLines = useMemo(() => {
+    const origin = chain?.pts[chain.pts.length - 1];
+    if (!origin) return [];
+    const out: { from: THREE.Vector3; to: THREE.Vector3 }[] = [];
+    for (const id of forks.slice(0, MAX_FORKS)) {
+      const n = byId.get(id);
+      if (!n) continue;
+      out.push({ from: origin, to: new THREE.Vector3(n.x, n.y, n.z) });
+    }
+    return out;
+  }, [forks, byId, chain]);
+
+  const chainCount = style === "comet" ? TRAIL : DOTS;
   const threeColor = useMemo(() => new THREE.Color(color), [color]);
+  const tmp = useMemo(() => new THREE.Vector3(), []);
 
-  /* Position for a normalized progress u ∈ [0,1] along the chain, plus the
-   * depth index reached — the accelerator reads that. */
+  /* Position for a normalized progress u ∈ [0,1] along the chain; returns the
+   * segment index reached, which drives the acceleration. */
   const sample = (u: number, out: THREE.Vector3): number => {
     if (!chain) return 0;
     let want = Math.max(0, Math.min(1, u)) * chain.total;
@@ -89,58 +125,82 @@ export function PathLight({ path, nodes, color, style, speed }: PathLightProps) 
     return 0;
   };
 
-  const tmp = useMemo(() => new THREE.Vector3(), []);
-
   useFrame((_, delta) => {
-    if (!chain || !headsRef.current) return;
+    if (!chain) return;
 
-    /* Base pace covers the chain in ~1.6s at 1× and gains speed with each level
-     * already passed, matching the static map's ring acceleration. */
-    const reached = sample(t.current, tmp);
+    /* Base pace covers the chain in ~1.6s at 1×, gaining speed with each level
+     * already passed. */
+    const reached = sample(Math.min(1, t.current), tmp);
     const accel = 1 + reached * 0.35;
     t.current += delta * 0.62 * speed * accel;
-    if (t.current > 1.25) t.current = 0; /* brief dark gap, then run again */
 
-    const children = headsRef.current.children;
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i] as THREE.Sprite;
-      /* Comet: a tight trail behind one head. Dots: markers spread over the
-       * whole chain, all drifting together. */
+    const forkEnd = 1 + (forkLines.length > 0 ? FORK_SPAN : 0);
+    if (t.current > forkEnd + REST) t.current = 0;
+
+    const inChain = t.current <= 1;
+    const forkProgress = forkLines.length > 0 ? (t.current - 1) / FORK_SPAN : -1;
+
+    /* Chain heads. */
+    const chainKids = chainRef.current?.children ?? [];
+    for (let i = 0; i < chainKids.length; i++) {
+      const child = chainKids[i] as THREE.Sprite;
       const u =
-        style === "comet"
-          ? t.current - i * 0.035
-          : (t.current + i / count) % 1;
-      if (u < 0 || u > 1) {
+        style === "comet" ? t.current - i * 0.035 : (t.current + i / chainCount) % 1;
+      if (!inChain || u < 0 || u > 1) {
         child.visible = false;
         continue;
       }
       child.visible = true;
       sample(u, tmp);
       child.position.copy(tmp);
-      const fade = style === "comet" ? 1 - i / count : 0.85;
+      const fade = style === "comet" ? 1 - i / chainCount : 0.85;
       const scale = (style === "comet" ? 26 - i * 2.2 : 18) * (0.6 + fade * 0.4);
       child.scale.setScalar(Math.max(4, scale));
-      const mat = child.material as THREE.SpriteMaterial;
-      mat.opacity = fade * 0.9;
+      (child.material as THREE.SpriteMaterial).opacity = fade * 0.9;
+    }
+
+    /* Fork heads: released together once the chain is done, each running out to
+     * its neighbour and fading as it arrives. */
+    const forkKids = forkRef.current?.children ?? [];
+    for (let i = 0; i < forkKids.length; i++) {
+      const child = forkKids[i] as THREE.Sprite;
+      const line = forkLines[i];
+      if (!line || forkProgress < 0 || forkProgress > 1) {
+        child.visible = false;
+        continue;
+      }
+      child.visible = true;
+      /* Ease out so the split reads as a burst rather than a constant crawl. */
+      const p = 1 - Math.pow(1 - forkProgress, 2);
+      child.position.copy(line.from).lerp(line.to, p);
+      child.scale.setScalar(Math.max(4, 20 * (1 - forkProgress * 0.45)));
+      (child.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - forkProgress);
     }
   });
 
   if (!chain) return null;
 
+  const head = (key: number) => (
+    <sprite key={key}>
+      <spriteMaterial
+        map={glowSprite()}
+        color={threeColor}
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        toneMapped={false}
+      />
+    </sprite>
+  );
+
   return (
-    <group ref={headsRef}>
-      {Array.from({ length: count }, (_, i) => (
-        <sprite key={i}>
-          <spriteMaterial
-            map={glowSprite()}
-            color={threeColor}
-            transparent
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-            toneMapped={false}
-          />
-        </sprite>
-      ))}
-    </group>
+    <>
+      <group ref={chainRef}>
+        {Array.from({ length: chainCount }, (_, i) => head(i))}
+      </group>
+      <group ref={forkRef}>
+        {Array.from({ length: forkLines.length }, (_, i) => head(i))}
+      </group>
+    </>
   );
 }

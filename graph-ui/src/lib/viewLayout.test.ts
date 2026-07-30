@@ -3,6 +3,7 @@ import {
   applyViewMode,
   computeCrumbs,
   computePathToRoot,
+  computeReferenceForks,
   DEFAULT_LAYOUT_PARAMS,
   deriveHierarchy,
 } from "./viewLayout";
@@ -163,6 +164,93 @@ describe("applyViewMode", () => {
   });
 });
 
+describe("layout proportions at scale", () => {
+  /* A wide, shallow corpus — the shape that broke every projection. p4 is ~47k
+   * nodes over 4-8 depths, so tens of thousands of siblings share one level. */
+  function wide(files: number, perFile: number) {
+    const ns: GraphNode[] = [n(1, "root", "root")];
+    const es: GraphEdge[] = [];
+    let id = 2;
+    for (let f = 0; f < files; f++) {
+      const file = id++;
+      ns.push(n(file, `f${f}.c`, `root/f${f}.c`));
+      es.push({ source: 1, target: file, type: "CONTAINS_FILE" });
+      for (let s = 0; s < perFile; s++) {
+        const sym = id++;
+        ns.push(n(sym, `fn${f}_${s}`, `root/f${f}.c`));
+        es.push({ source: file, target: sym, type: "DEFINES" });
+      }
+    }
+    /* Give the input a definite extent for fitToExtent to match. */
+    let seed = 7;
+    for (const node of ns) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      node.x = (seed / 0x7fffffff - 0.5) * 1000;
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      node.y = (seed / 0x7fffffff - 0.5) * 1000;
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      node.z = (seed / 0x7fffffff - 0.5) * 1000;
+    }
+    return { ns, es };
+  }
+
+  function spans(ns: GraphNode[]) {
+    const xs = ns.map((v) => v.x);
+    const ys = ns.map((v) => v.y);
+    const zs = ns.map((v) => v.z);
+    return [
+      Math.max(...xs) - Math.min(...xs),
+      Math.max(...ys) - Math.min(...ys),
+      Math.max(...zs) - Math.min(...zs),
+    ];
+  }
+
+  it("keeps every projection within a sane aspect ratio on a wide corpus", () => {
+    /* The tidy tree used a fixed 18-unit row gap, so 47k leaves made it 846,000
+     * units tall against 1,520 wide — 557:1, which rendered as a vertical line. */
+    const { ns, es } = wide(700, 12);
+    for (const mode of ["sphere", "cone", "tree"] as const) {
+      const out = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
+      const nonZero = spans(out).filter((s) => s > 1e-6);
+      const aspect = Math.max(...nonZero) / Math.min(...nonZero);
+      expect(aspect, `${mode} aspect ratio`).toBeLessThan(6);
+    }
+  });
+
+  it("matches the extent the camera is already framed for", () => {
+    /* A projection sized from depth alone landed at a different scale than the
+     * server layout, so switching view showed a speck or a clipped mess. */
+    const { ns, es } = wide(300, 8);
+    const before = Math.max(...spans(ns));
+    for (const mode of ["sphere", "cone", "tree"] as const) {
+      const out = applyViewMode(ns, es, mode, DEFAULT_LAYOUT_PARAMS);
+      const after = Math.max(...spans(out));
+      expect(after / before, `${mode} extent ratio`).toBeGreaterThan(0.5);
+      expect(after / before, `${mode} extent ratio`).toBeLessThan(3);
+    }
+  });
+
+  it("spreads a depth level into a band instead of one circle", () => {
+    /* Latitude straight from an integer depth put thousands of nodes on a
+     * razor-thin ring; they overlapped into a wireframe. Siblings must occupy
+     * distinct distances from the sphere's axis. */
+    const { ns, es } = wide(200, 10);
+    const out = applyViewMode(ns, es, "sphere", DEFAULT_LAYOUT_PARAMS);
+    const h = deriveHierarchy(ns, es);
+    const byId = new Map(out.map((v) => [v.id, v]));
+    const deepest = [...h.slotOf.entries()].filter(
+      ([, s]) => s.depth === h.maxDepth,
+    );
+    const radii = new Set(
+      deepest.map(([id]) => {
+        const v = byId.get(id)!;
+        return Math.hypot(v.x, v.z).toFixed(1);
+      }),
+    );
+    expect(radii.size).toBeGreaterThan(5);
+  });
+});
+
 describe("computePathToRoot", () => {
   it("returns the ordered ancestor chain ending at the node", () => {
     const h = deriveHierarchy(edgeNodes, containment);
@@ -178,6 +266,39 @@ describe("computePathToRoot", () => {
   it("returns empty for an unknown node", () => {
     const h = deriveHierarchy(edgeNodes, containment);
     expect(computePathToRoot(999, h)).toEqual([]);
+  });
+});
+
+describe("computeReferenceForks", () => {
+  /* The light travelled the containment chain and stopped. The fork half — the
+   * split along the selection's own references — was missing, so selecting a node
+   * never lit what it actually relates to. */
+  const refs: GraphEdge[] = [
+    { source: 2, target: 3, type: "DEFINES" }, /* containment: the chain itself */
+    { source: 3, target: 7, type: "CALLS" },
+    { source: 8, target: 3, type: "USAGE" },
+    { source: 3, target: 9, type: "IMPORTS" },
+  ];
+
+  it("returns references in both directions", () => {
+    expect(computeReferenceForks(3, refs).sort()).toEqual([7, 8, 9]);
+  });
+
+  it("excludes the containment chain the light just travelled", () => {
+    expect(computeReferenceForks(3, refs)).not.toContain(2);
+  });
+
+  it("dedupes and caps the fan-out", () => {
+    const many: GraphEdge[] = [];
+    for (let i = 100; i < 140; i++) many.push({ source: 3, target: i, type: "CALLS" });
+    many.push({ source: 3, target: 100, type: "USAGE" }); /* duplicate target */
+    const out = computeReferenceForks(3, many, 5);
+    expect(out).toHaveLength(5);
+    expect(new Set(out).size).toBe(5);
+  });
+
+  it("returns nothing for a node with no references", () => {
+    expect(computeReferenceForks(42, refs)).toEqual([]);
   });
 });
 

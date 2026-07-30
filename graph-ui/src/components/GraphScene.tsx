@@ -16,7 +16,7 @@ import {
   nodeBoostScale,
   type DisplaySettings,
 } from "../lib/density";
-import type { PathLightStyle } from "../lib/viewSettings";
+import type { AutoRotate, PathLightStyle } from "../lib/viewSettings";
 
 const BASE_BLOOM_INTENSITY = 1.45;
 
@@ -76,18 +76,22 @@ export const GRAPH_COMPOSER_MULTISAMPLING = 0;
 
 function IdleAutoRotate({
   controlsRef,
+  mode,
 }: {
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  mode: AutoRotate;
 }) {
   const lastInteraction = useRef(Date.now());
 
-  /* Reset timer on any pointer/wheel event */
+  /* Reset timer on any pointer/wheel event. An explicit "on" keeps spinning
+   * through interaction — the user asked for it, so touching the canvas should
+   * not silently cancel it. */
   const resetTimer = useCallback(() => {
     lastInteraction.current = Date.now();
-    if (controlsRef.current) {
+    if (controlsRef.current && mode !== "on") {
       controlsRef.current.autoRotate = false;
     }
-  }, [controlsRef]);
+  }, [controlsRef, mode]);
 
   useEffect(() => {
     const canvas = document.querySelector("canvas");
@@ -103,6 +107,14 @@ function IdleAutoRotate({
 
   useFrame(() => {
     if (!controlsRef.current) return;
+    if (mode === "on") {
+      controlsRef.current.autoRotate = true;
+      return;
+    }
+    if (mode === "off") {
+      controlsRef.current.autoRotate = false;
+      return;
+    }
     const idle = Date.now() - lastInteraction.current > IDLE_TIMEOUT_MS;
     controlsRef.current.autoRotate = idle;
   });
@@ -123,6 +135,10 @@ interface GraphSceneProps {
   fov?: number;
   /** Ordered node ids root→selection for the path light; empty disables it. */
   lightPath?: number[];
+  /** Neighbours the light forks along once it reaches the selection. */
+  lightForks?: number[];
+  /** "idle" keeps the after-a-minute showpiece; "on"/"off" are explicit. */
+  autoRotate?: AutoRotate;
   pathLightStyle?: PathLightStyle;
   pathLightSpeed?: number;
   /** Light colour; empty follows the theme accent. */
@@ -156,6 +172,8 @@ export function GraphScene({
   onNodeClick,
   fov = 50,
   lightPath,
+  lightForks,
+  autoRotate = "idle",
   pathLightStyle = "comet",
   pathLightSpeed = 1,
   pathLightColor = "",
@@ -253,6 +271,7 @@ export function GraphScene({
       {lightPath && lightPath.length > 1 && (
         <PathLight
           path={lightPath}
+          forks={lightForks}
           nodes={data.nodes}
           color={pathLightColor || "#ffce6e"}
           style={pathLightStyle}
@@ -263,7 +282,7 @@ export function GraphScene({
       {hovered && <NodeTooltip node={hovered} />}
 
       <CameraAnimator target={cameraTarget} controlsRef={controlsRef} />
-      <IdleAutoRotate controlsRef={controlsRef} />
+      <IdleAutoRotate controlsRef={controlsRef} mode={autoRotate} />
 
       <EffectComposer multisampling={GRAPH_COMPOSER_MULTISAMPLING}>
         <Bloom

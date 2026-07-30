@@ -23,7 +23,11 @@ import {
   applyViewMode,
   computeCrumbs,
   computePathToRoot,
+  computeReferenceForks,
   deriveHierarchy,
+  VIEW_MODE_LABEL,
+  VIEW_MODE_SHORT,
+  VIEW_MODES,
 } from "../lib/viewLayout";
 import {
   GraphScene,
@@ -279,6 +283,11 @@ export function GraphTab({ project }: GraphTabProps) {
     if (!view.pathLight || !selectedNode || !hierarchy) return undefined;
     return computePathToRoot(selectedNode.id, hierarchy);
   }, [view.pathLight, selectedNode, hierarchy]);
+  /* Where the light forks once it lands: the selection's own references. */
+  const lightForks = useMemo(() => {
+    if (!view.pathLight || !selectedNode || !filteredData) return undefined;
+    return computeReferenceForks(selectedNode.id, filteredData.edges);
+  }, [view.pathLight, selectedNode, filteredData]);
 
   const labelsInGraph = useMemo(
     () => (data ? [...new Set(data.nodes.map((n) => n.label))] : []),
@@ -554,6 +563,8 @@ export function GraphTab({ project }: GraphTabProps) {
                 onNodeClick={handleNodeClick}
                 fov={view.fov}
                 lightPath={lightPath}
+                lightForks={lightForks}
+                autoRotate={view.autoRotate}
                 pathLightStyle={view.pathLightStyle}
                 pathLightSpeed={view.pathLightSpeed}
                 pathLightColor={view.pathLightColor}
@@ -650,6 +661,45 @@ export function GraphTab({ project }: GraphTabProps) {
                 title="How the graph works"
               >
                 ?
+              </Button>
+              {/* Projection cycle — the same control the static map put on its
+                  zoom rail, so switching views does not mean opening Settings. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  updateView({
+                    ...view,
+                    mode:
+                      VIEW_MODES[(VIEW_MODES.indexOf(view.mode) + 1) % VIEW_MODES.length],
+                  })
+                }
+                aria-label={`View: ${VIEW_MODE_LABEL[view.mode]} — click to cycle`}
+                title="Cycle projection: force, sphere, cone, tree"
+              >
+                {VIEW_MODE_SHORT[view.mode]}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  updateView({
+                    ...view,
+                    autoRotate: view.autoRotate === "on" ? "off" : "on",
+                  })
+                }
+                aria-label={
+                  view.autoRotate === "on" ? "Stop auto-rotate" : "Start auto-rotate"
+                }
+                title={
+                  view.autoRotate === "on"
+                    ? "Stop the camera orbit"
+                    : view.autoRotate === "off"
+                      ? "Start the camera orbit"
+                      : "Start the camera orbit (currently idle-triggered)"
+                }
+              >
+                {view.autoRotate === "on" ? "❚❚" : "▶"}
               </Button>
               <Button
                 variant="outline"

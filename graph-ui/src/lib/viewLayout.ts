@@ -24,12 +24,22 @@ export const VIEW_MODE_LABEL: Record<ViewMode, string> = {
   tree: "2D tree",
 };
 
+/* Toolbar-width labels for the cycle button. */
+export const VIEW_MODE_SHORT: Record<ViewMode, string> = {
+  default: "Force",
+  sphere: "Sphere",
+  cone: "Cone",
+  tree: "Tree",
+};
+
 /* Layout constants, ported from astra-map.js (RING 120, TREE_LEVEL_W 190,
- * TREE_LEAF_GAP 18, SPHERE_LAT_SPAN 0.92). World scale matches Cartograph's
- * default camera (z=800, fov 50). */
+ * SPHERE_LAT_SPAN 0.92). The static map's fixed TREE_LEAF_GAP of 18 units is
+ * deliberately not carried over — see projectTree: row spacing is derived from
+ * the leaf count so the tree keeps its proportions at any corpus size. Both RING
+ * and the sphere radius are treated as minimums, then the whole layout is scaled
+ * to the server layout's extent so the camera framing carries over. */
 const RING = 120;
 const TREE_LEVEL_W = 190;
-const TREE_LEAF_GAP = 18;
 const SPHERE_LAT_SPAN = 0.92;
 
 /* Edge types that mean "source structurally contains target", lowest number
@@ -85,6 +95,10 @@ interface Slot {
   angle: number;
   row: number;
   parent: Slot | null;
+  /* Position among its siblings, used to spread a sibling group across its
+   * depth band instead of stacking every one of them on the same circle. */
+  sibIndex: number;
+  sibCount: number;
 }
 
 export interface Hierarchy {
@@ -93,6 +107,8 @@ export interface Hierarchy {
   /** Real node id → its slot. */
   slotOf: Map<number, Slot>;
   maxDepth: number;
+  /** Leaf slots, i.e. how many rows the tidy tree needs. */
+  leafCount: number;
   /** True when the tree came from containment edges rather than path strings. */
   fromEdges: boolean;
 }
@@ -107,6 +123,8 @@ function makeSlot(key: string, parent: Slot | null): Slot {
     angle: 0,
     row: 0,
     parent,
+    sibIndex: 0,
+    sibCount: 1,
   };
 }
 
@@ -193,7 +211,7 @@ function buildFromEdges(
 
   sortChildren(root);
   countLeaves(root);
-  return { root, slotOf, maxDepth: 0, fromEdges: true };
+  return { root, slotOf, maxDepth: 0, leafCount: 1, fromEdges: true };
 }
 
 /* Tree from file_path strings — the fallback for graphs with no containment
@@ -243,7 +261,7 @@ function buildFromPaths(nodes: GraphNode[]): Hierarchy {
 
   sortChildren(root);
   countLeaves(root);
-  return { root, slotOf, maxDepth: 0, fromEdges: false };
+  return { root, slotOf, maxDepth: 0, leafCount: 1, fromEdges: false };
 }
 
 /* Angle partition, ported from astra-map.js placeNode(): each slot owns an
@@ -263,7 +281,10 @@ function assign(h: Hierarchy) {
     }
     let a = a0;
     const span = a1 - a0;
-    for (const c of slot.children) {
+    for (let i = 0; i < slot.children.length; i++) {
+      const c = slot.children[i];
+      c.sibIndex = i;
+      c.sibCount = slot.children.length;
       const frac = slot.leaves > 0 ? c.leaves / slot.leaves : 0;
       walk(c, a, a + span * frac);
       a += span * frac;
@@ -279,6 +300,7 @@ function assign(h: Hierarchy) {
    * static map's orientation. */
   walk(h.root, -Math.PI / 2, Math.PI * 1.5);
   h.maxDepth = maxDepth;
+  h.leafCount = Math.max(1, rowCursor);
 }
 
 export function deriveHierarchy(
@@ -292,14 +314,28 @@ export function deriveHierarchy(
 
 /* ── Projections ───────────────────────────────────────────────── */
 
+/* Where a slot sits inside its own depth band, 0..1.
+ *
+ * Latitude (sphere) and ring radius (cone) come from an integer depth, so on a
+ * real corpus every node at the same depth landed on one razor-thin circle: p4
+ * has ~47k nodes across 8 depths, i.e. ~5.9k nodes sharing a circle with 0.8
+ * world units between them. They overlapped into a wireframe instead of reading
+ * as a cloud. Offsetting each node inside its band by its position among its
+ * siblings turns each ring into a filled shell, and keeps a sibling group
+ * together as a patch rather than smearing it around the whole circle. */
+function bandOffset(slot: Slot): number {
+  return slot.sibCount > 1 ? (slot.sibIndex + 0.5) / slot.sibCount - 0.5 : 0;
+}
+
 /* Sphere: depth becomes latitude, angle becomes longitude — the corpus wrapped
- * onto a globe with the root at the north pole. */
+ * onto a globe with the root at the north pole, each depth a filled band. */
 function projectSphere(
   slot: Slot,
   maxDepth: number,
   radius: number,
 ): [number, number, number] {
-  const phi = (slot.depth / (maxDepth + 0.6)) * Math.PI * SPHERE_LAT_SPAN;
+  const band = (Math.PI * SPHERE_LAT_SPAN) / (maxDepth + 0.6);
+  const phi = (slot.depth + bandOffset(slot) * 0.85) * band;
   const th = slot.angle;
   return [
     radius * Math.sin(phi) * Math.cos(th),
@@ -309,28 +345,37 @@ function projectSphere(
 }
 
 /* Cone: the radial layout's footprint, with depth lifted along Y — a stack of
- * rings narrowing toward the root. */
+ * rings narrowing toward the root, each ring given thickness so it reads as a
+ * shell rather than a hoop. */
 function projectCone(
   slot: Slot,
   maxDepth: number,
   coneHeight: number,
+  ring: number,
 ): [number, number, number] {
-  const r = slot.depth * RING;
+  const off = bandOffset(slot);
+  const r = (slot.depth + off * 0.7) * ring;
   return [
     Math.cos(slot.angle) * r,
-    (maxDepth * 0.5 - slot.depth) * coneHeight,
+    (maxDepth * 0.5 - slot.depth - off * 0.5) * coneHeight,
     Math.sin(slot.angle) * r,
   ];
 }
 
 /* Tidy tree, flattened to z=0: depth along one axis, leaf rows along the other.
- * Rows never collide, so labels can sit beside nodes overlap-free. */
+ *
+ * Row spacing is derived, not fixed. At the static map's scale (a few hundred
+ * files) a constant 18-unit gap was fine; at 47k leaves it made the tree 846,000
+ * units tall against 1,520 wide — a 557:1 sliver that rendered as a single
+ * vertical line. Spacing now divides a target extent by the leaf count, so the
+ * proportions hold at any size. */
 function projectTree(
   slot: Slot,
   direction: TreeDirection,
+  leafGap: number,
 ): [number, number, number] {
   const along = slot.depth * TREE_LEVEL_W;
-  const across = slot.row * TREE_LEAF_GAP;
+  const across = slot.row * leafGap;
   /* Vertical flows top-to-bottom: depth on -Y, rows on X. */
   return direction === "vertical" ? [across, -along, 0] : [along, -across, 0];
 }
@@ -339,6 +384,41 @@ function projectTree(
  * doesn't vanish — ported from SPHERE_R_BASE. */
 function sphereRadius(maxDepth: number, scale: number): number {
   return Math.max(260, maxDepth * 95) * scale;
+}
+
+/* Longest distance from the centroid — the extent the camera is already framed
+ * for. */
+function boundingRadius(nodes: GraphNode[]): number {
+  if (nodes.length === 0) return 0;
+  let cx = 0, cy = 0, cz = 0;
+  for (const n of nodes) {
+    cx += n.x; cy += n.y; cz += n.z;
+  }
+  cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
+  let max = 0;
+  for (const n of nodes) {
+    const d = Math.hypot(n.x - cx, n.y - cy, n.z - cz);
+    if (d > max) max = d;
+  }
+  return max;
+}
+
+/* Scale a projected layout to the extent the server layout occupies.
+ *
+ * Cartograph frames the camera once, from the server's own coordinate range;
+ * a projection sized from depth alone (max(260, depth*95) — 760 units on p4)
+ * landed at a different scale entirely, so switching view left the graph either
+ * a speck or clipped past the near plane. Matching the incoming extent means
+ * every projection arrives already framed. */
+function fitToExtent(nodes: GraphNode[], target: number): GraphNode[] {
+  if (nodes.length === 0 || target <= 0) return nodes;
+  const current = boundingRadius(nodes);
+  if (current <= 0) return nodes;
+  const k = target / current;
+  for (const n of nodes) {
+    n.x *= k; n.y *= k; n.z *= k;
+  }
+  return nodes;
 }
 
 /* Re-center a layout on the origin so the existing camera framing still works
@@ -377,20 +457,38 @@ export function applyViewMode(
 
   const h = hierarchy ?? deriveHierarchy(nodes, edges);
   const radius = sphereRadius(h.maxDepth, params.sphereScale);
+  /* Extent the camera is already framed for, measured before we overwrite the
+   * positions. */
+  const target = boundingRadius(nodes);
+
+  /* Row spacing that holds the tree's proportions at any corpus size: solve for
+   * the gap that makes the rows span ~1.4× the depth axis. Deliberately not
+   * floored at some minimum — a floor is what produced the 557:1 sliver, because
+   * 42k rows at any fixed spacing dwarf a depth axis a few levels deep. Absolute
+   * spacing does not matter here since fitToExtent rescales afterwards; only the
+   * ratio does. */
+  const treeLeafGap =
+    (h.maxDepth * TREE_LEVEL_W * 1.4) / Math.max(1, h.leafCount - 1);
 
   const out = nodes.map((n) => {
     const slot = h.slotOf.get(n.id);
     if (!slot) return { ...n };
     let p: [number, number, number];
     if (mode === "sphere") p = projectSphere(slot, h.maxDepth, radius);
-    else if (mode === "cone") p = projectCone(slot, h.maxDepth, params.coneHeight);
-    else p = projectTree(slot, params.treeDirection);
+    else if (mode === "cone")
+      /* RING stays fixed so the cone's profile is set by coneHeight alone —
+       * scaling the ring with breadth instead made the base radius dwarf the
+       * height, and fitToExtent then flattened the whole thing to a disc. */
+      p = projectCone(slot, h.maxDepth, params.coneHeight, RING);
+    else p = projectTree(slot, params.treeDirection, treeLeafGap);
     return { ...n, x: p[0], y: p[1], z: p[2] };
   });
 
   /* Several nodes can share one slot (multiple symbols in one file). Fan them
-   * out slightly so they don't stack into a single dot. */
+   * out slightly so they don't stack into a single dot. Spread scales with the
+   * layout so it stays visible on a large corpus and subtle on a small one. */
   const seen = new Map<Slot, number>();
+  const fan = Math.max(4, boundingRadius(out) * 0.006);
   for (let i = 0; i < out.length; i++) {
     const slot = h.slotOf.get(out[i].id);
     if (!slot || slot.ids.length < 2) continue;
@@ -399,7 +497,7 @@ export function applyViewMode(
     if (k === 0) continue;
     /* Golden-angle spiral around the slot centre — deterministic, no overlap. */
     const a = k * 2.39996;
-    const rr = 6 * Math.sqrt(k);
+    const rr = fan * Math.sqrt(k);
     out[i] = {
       ...out[i],
       x: out[i].x + Math.cos(a) * rr,
@@ -407,7 +505,9 @@ export function applyViewMode(
     };
   }
 
-  return centered(out);
+  /* Centre first, then match the server layout's extent so the camera framing
+   * carries over unchanged. */
+  return fitToExtent(centered(out), target);
 }
 
 /* ── Path to root ──────────────────────────────────────────────── */
@@ -425,6 +525,33 @@ export function computePathToRoot(nodeId: number, h: Hierarchy): number[] {
   chain.reverse();
   chain.push(nodeId);
   return chain;
+}
+
+/* Non-containment neighbours of a node: what it references and what references
+ * it. The path light runs the containment chain down to the selection and then
+ * forks along these, which is the half of the static map's behaviour that was
+ * missing — the light arrived at the node and stopped, so a selection's actual
+ * relationships never lit up.
+ *
+ * Containment edges are excluded: those are the chain the light just travelled,
+ * and re-lighting them would double back on itself. */
+export function computeReferenceForks(
+  nodeId: number,
+  edges: GraphEdge[],
+  limit = 12,
+): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>([nodeId]);
+  for (const e of edges) {
+    if (CONTAINMENT_PRIORITY[e.type] !== undefined) continue;
+    const other =
+      e.source === nodeId ? e.target : e.target === nodeId ? e.source : null;
+    if (other === null || seen.has(other)) continue;
+    seen.add(other);
+    out.push(other);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /* Ancestor path for the breadcrumb: one entry per level, labelled. Includes
