@@ -63,12 +63,16 @@ link that runs the delegated probe (with its "still measuring" notice past 2 s).
 Phase 3 is the parity sweep and touches those same surfaces, so starting it before the pass
 moves the target — the exact pattern that cost four rounds in the usability arc.
 
-### One plan dependency changed — Phase 5's A16
+### One plan dependency did NOT change — Phase 5's A16 (correcting this section's earlier claim)
 
-Phase 1's *feature* (the missed-graph coverage backend) is on `Merged`, quarantined with the
-daemon. **It never reached `HQM-dev`.** The plan assumed Phase 1 "lands the coverage backend
-Phase 5 surfaces (A16)", so A16 has no data source on our line and needs rescoping when Phase 5
-comes up. Phases 3 and 4 are unaffected — they are entirely our own surfaces.
+An earlier version of this section said the missed-graph coverage backend "never reached
+`HQM-dev`" — **that was wrong**, verified against git 2026-07-31 late. Two merges were being
+conflated: the ten-commit *slice* (`3eb294fa`) was merged directly into `HQM-dev` as
+`e2c2a1c0`, is an ancestor of today's tree, brought `test_parse_coverage.c` +
+`test_index_resilience.c` (both in tonight's green run) and the coverage table in `store.c` —
+and carried **no daemon** (`src/daemon/` does not exist on `HQM-dev`). The quarantine applies
+only to the separate full-547 take on `Merged` (`500ac1ce`). So **A16 has its data source and
+is a pure display job**, B1-gated like all `graph-ui` work. Phases 3 and 4 unaffected either way.
 
 ### Next actions, in order
 
@@ -84,8 +88,10 @@ comes up. Phases 3 and 4 are unaffected — they are entirely our own surfaces.
    A3 URL assertions (`releases/latest`, `releases/latest/download`) and nothing else —
    which is the flag working in both positions AND the gate proving it can detect the
    updater when present. Log: `scratchpad/c-suite/build-selfupdate-on.log` (`EXIT=2`,
-   expected). **Consequence: `build/c/` now holds the self-update-ON artifact — rebuild
-   OFF before serving or releasing anything from this tree.**
+   expected). The ON artifact was then replaced: the default (OFF) `--with-ui` build was
+   rerun 2026-07-31 late — **`EXIT=0`, gate `BINARY COMPOSITION OK: 12 assertions passed`**
+   (`build-v0.9.0-hqm-v0.2.0-rc.log`), so `build/c/` holds a clean, gate-verified artifact
+   ready for the owner's B1 serve.
 3. ~~Item 5's `mcp.c` half.~~ **DONE** in `dbd7add7` — `search_scratch_open`/`search_scratch_close`
    over a `cbm_mkdtemp` private dir, files via `cbm_mkstemp`, written through the descriptor
    (see the item-5 row in the table above).
