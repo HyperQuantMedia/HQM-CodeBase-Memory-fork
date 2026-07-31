@@ -30,8 +30,15 @@ still the gate ([`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cyc
 
 ### B1 — Round 5–8 UI work is unverified by eyes
 
-**Severity:** blocking the cycle · **Status:** **round 1 done 2026-08-01** — partial pass, three
-new defects, density verdict still open
+**Severity:** was blocking the cycle · **Status:** **density APPROVED 2026-08-01 round 2 — the
+gate is open.** Remaining: owner's eye on the B12/B13/B14 fixes and the unnamed "mostly" remainder
+
+**Round 2 (bundle `index-LIahPU0Q`): spacing 0.85 approved by eye.** Owner's words: it reads
+right *because it is a 3D view, not a 2D perspective, and the rotation matters* — density
+judgment is bound to parallax and orbit, worth remembering when anyone proposes judging spacing
+from a static screenshot. The recalibration ruling lives in the probe's `CALIBRATION` comment and
+`e88c0b90`: ceiling 18%, sparse tie-break, dial 0.85, probe recommendation = shipped value on the
+real corpus. **Phase 0 is satisfied — Phases 3 and 4 are unblocked.**
 
 Owner's first pass on the served build (`assets/index-BcsUzG7C.js`):
 

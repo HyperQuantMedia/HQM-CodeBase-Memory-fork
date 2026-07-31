@@ -45,7 +45,17 @@ home to DeusData, shipped the dropper composite, and had `GNU_STACK RWE` on ever
 loses nothing. It is *not* a finished cycle: items 5 and 8 are incomplete, so do not cut a
 release from this state.
 
-### Owner's B1 visual pass — next session, and it still gates Phase 3
+### B1 — DENSITY APPROVED 2026-08-01 (round 2, spacing 0.85). Phase 3 is open.
+
+Two rounds on 2026-08-01: round 1 rejected 0.70 as too crowded and found B12/B13/B14 (all
+fixed in `2f669858`); round 2 approved 0.85 (`e88c0b90` — ceiling 18%, sparse tie-break,
+probe agrees with the shipped value on the real corpus). Owner's reasoning worth keeping:
+the scene reads right **because it is 3D and rotates** — spacing judgments are bound to
+parallax, never to a static screenshot. Still owed to the owner's eye: the three fix
+verifications and the unnamed "graph sidebar mostly" remainder. The section below is the
+pre-pass state, kept for the record.
+
+### Owner's B1 visual pass — superseded by the above; it gated Phase 3 until 2026-08-01
 
 The owner runs the visual verification himself in the next session. Serve the current build
 first (`scratchpad/c-suite/build-with-ui.sh <version>`, then start the binary with
