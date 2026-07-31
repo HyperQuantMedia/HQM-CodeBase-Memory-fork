@@ -27,9 +27,9 @@ function Gauge({ label, value, max, unit, color }: {
 
 /* ── Process card ───────────────────────────────────────── */
 
-function ProcessCard({ proc, selected, onSelect, onKill }: {
+function ProcessCard({ proc, selected, onSelect }: {
   proc: ProcessInfo; selected: boolean;
-  onSelect: () => void; onKill: () => void;
+  onSelect: () => void;
 }) {
   const t = useUiMessages();
   return (
@@ -51,14 +51,19 @@ function ProcessCard({ proc, selected, onSelect, onKill }: {
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium">{t.control.thisProcess}</span>
           )}
         </div>
-        {!proc.is_self && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onKill(); }}
-            className="px-2 py-1 rounded-lg text-[10px] text-ink-faint hover:text-destructive hover:bg-destructive/10 transition-all"
-          >
-            {t.control.kill}
-          </button>
-        )}
+        {/* No kill affordance. Upstream removed it with the session-coordination
+            work and deleted the backend endpoint with it — their http_server.c has
+            no /api/kill or /api/process-kill at all — because a daemon that
+            coordinates concurrent sessions makes "terminate the other process" the
+            wrong answer.
+
+            We had gone the other way and made the Windows path real, which is how we
+            found that the /api/kill authorization check lived inside
+            `#ifndef _WIN32` and therefore never ran on Windows at all. Deleting the
+            capability beats guarding it: a guard that never runs was never tested,
+            and this removes the whole class. The process *listing* stays — our
+            Toolhelp32 implementation is kept, since upstream's Windows Diagnostics
+            still returns an empty array. */}
       </div>
 
       <div className="grid grid-cols-3 gap-3 mb-2">
@@ -271,18 +276,6 @@ export function ControlTab() {
     return () => clearInterval(interval);
   }, [fetchProcesses]);
 
-  const killProcess = useCallback(async (pid: number) => {
-    if (!confirm(t.control.killConfirm(pid))) return;
-    try {
-      await fetch("/api/process-kill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pid }),
-      });
-      setTimeout(fetchProcesses, 1000);
-    } catch { /* ignore */ }
-  }, [fetchProcesses, t.control]);
-
   /* Aggregates */
   const totalCpu = processes.reduce((s, p) => s + p.cpu, 0);
   const totalRam = processes.reduce((s, p) => s + p.rss_mb, 0);
@@ -324,7 +317,6 @@ export function ControlTab() {
                   proc={p}
                   selected={selectedPid === p.pid}
                   onSelect={() => setSelectedPid(selectedPid === p.pid ? null : p.pid)}
-                  onKill={() => killProcess(p.pid)}
                 />
               ))}
             </div>

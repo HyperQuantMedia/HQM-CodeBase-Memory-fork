@@ -25,6 +25,8 @@ enum { PD_JSON_FIELD_OVERHEAD = 6 };
 #include "foundation/compat_fs.h"
 #include "foundation/limits.h"
 #include "cbm.h"
+#include "arena.h"
+#include "iris_export_xml.h"
 #include "simhash/minhash.h"
 #include "semantic/ast_profile.h"
 
@@ -425,6 +427,12 @@ static int create_env_configures_for_file(cbm_pipeline_ctx_t *ctx, const CBMFile
         const cbm_gbuf_node_t *src = NULL;
         if (ea->enclosing_func_qn && ea->enclosing_func_qn[0]) {
             src = cbm_gbuf_find_by_qn(ctx->gbuf, ea->enclosing_func_qn);
+            /* A class-level env access in a directory-module language carries
+             * the DIRECTORY module QN, which hits the shared Folder/Project
+             * node — attribute to this file's File node instead (#787, #842). */
+            if (cbm_pipeline_node_is_dir_container(src)) {
+                src = NULL;
+            }
         }
         if (!src) {
             if (!file_qn) {
@@ -560,11 +568,42 @@ int cbm_pipeline_pass_definitions(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t
             continue;
         }
 
+        /* ObjectScript Studio Export XML: transcode each <Class> to UDL and
+         * extract it as CBM_LANG_OBJECTSCRIPT_UDL. The XML→UDL mapping is 1:1,
+         * so the same UDL extractor handles the result. These files are not
+         * cached (their defs/edges are emitted directly here). */
+        if (lang == CBM_LANG_OBJECTSCRIPT_EXPORT) {
+            CBMArena export_arena;
+            cbm_arena_init(&export_arena);
+            int class_count = 0;
+            char **udl_strings =
+                cbm_iris_export_to_udl(&export_arena, source, source_len, &class_count);
+            free(source);
+            for (int ci = 0; ci < class_count; ci++) {
+                CBMFileResult *xr = cbm_extract_file_ex(
+                    udl_strings[ci], (int)strlen(udl_strings[ci]), CBM_LANG_OBJECTSCRIPT_UDL,
+                    ctx->project_name, rel, CBM_EXTRACT_BUDGET, NULL, NULL, ctx->macro_table, NULL);
+                if (!xr) {
+                    continue;
+                }
+                for (int d = 0; d < xr->defs.count; d++) {
+                    process_def(ctx, &xr->defs.items[d], rel);
+                    total_defs++;
+                }
+                total_calls += xr->calls.count;
+                total_imports += create_import_edges_for_file(ctx, xr, rel, NULL);
+                create_channel_edges_for_file(ctx, xr, rel);
+                create_env_configures_for_file(ctx, xr, rel);
+                cbm_free_result(xr);
+            }
+            cbm_arena_destroy(&export_arena);
+            continue;
+        }
+
         /* Extract */
-        CBMFileResult *result =
-            cbm_extract_file(source, source_len, lang, ctx->project_name, rel, CBM_EXTRACT_BUDGET,
-                             NULL, NULL /* no extra defines or include paths */
-            );
+        CBMFileResult *result = cbm_extract_file_ex(
+            source, source_len, lang, ctx->project_name, rel, CBM_EXTRACT_BUDGET, NULL,
+            NULL /* no extra defines or include paths */, ctx->macro_table, NULL);
         free(source);
 
         if (!result) {

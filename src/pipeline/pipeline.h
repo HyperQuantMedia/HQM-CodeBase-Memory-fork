@@ -17,6 +17,9 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
+
+#include "discover/discover.h" /* cbm_ignored_file_t (#963) */
 
 /* Forward declarations */
 typedef struct cbm_store cbm_store_t;
@@ -58,6 +61,12 @@ int cbm_pipeline_run(cbm_pipeline_t *p);
 
 /* Request cancellation of a running pipeline (thread-safe). */
 void cbm_pipeline_cancel(cbm_pipeline_t *p);
+
+/* Bind cancellation to a caller-owned atomic flag. The flag must outlive the
+ * pipeline and should be initialized before binding. This lets a long-lived
+ * daemon request cancellation without retaining/dereferencing a pipeline
+ * pointer that its request thread may concurrently retire. */
+void cbm_pipeline_bind_cancel_flag(cbm_pipeline_t *p, atomic_int *cancelled);
 
 /* Get the project name derived from repo_path. Returned string is
  * owned by the pipeline. Valid until cbm_pipeline_free(). */
@@ -116,6 +125,13 @@ void cbm_pipeline_add_file_error(cbm_pipeline_t *p, const char *path, const char
  * cbm_pipeline_free()). out and count are set to NULL and 0 when p is NULL or
  * nothing was skipped. Do not free. */
 void cbm_pipeline_get_file_errors(const cbm_pipeline_t *p, cbm_file_error_t **out, int *count);
+
+/* Borrowed accessor for the individually-ignored files captured during
+ * discovery (#963 "purposely not indexed" — by design, not failures). count
+ * is the stored (capped) length, total the uncapped number seen. Do not
+ * free. */
+void cbm_pipeline_get_ignored(const cbm_pipeline_t *p, cbm_ignored_file_t **out, int *count,
+                              int *total);
 
 /* ── Index lock (prevents concurrent pipeline runs on same DB) ──── */
 

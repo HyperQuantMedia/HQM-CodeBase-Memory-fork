@@ -1,42 +1,79 @@
-# Weekly soak test: 4h sustained load + ASan leak detection
+# Soak dispatcher — the weekly scheduled soak AND every on-demand soak run.
 #
-# HQM fork: the weekly cron is REMOVED and the workflow is disabled in GitHub
-# (`gh workflow disable nightly-soak.yml`). A 4-hour soak every Sunday is the
-# single largest consumer in a shared ~3000 min/month Actions budget, and this
-# fork validates locally (scripts/build.sh + the test suite) rather than on
-# hosted runners. The soak is still available on demand once re-enabled, so
-# nothing is lost — it just cannot fire on its own, by two independent means.
+# Absorbs the retired soak.yml (the standalone "multi-hour #581" workflow): its
+# reasons to exist — a job budget that actually covers a 4h run, and the
+# query-leak mode that never reindexes so the #581 leak can accumulate — are
+# now _soak.yml facts (timeout 560, legs input). A long #581-only run is
+# `legs: query-leak` here, not a separate workflow with its own copy of the
+# soak procedure. NON-GATING: never a required check, never blocks a merge.
 #
-# It delegates to soak.yml, not _soak.yml: _soak.yml's jobs hard-cap at
-# timeout-minutes 30 (45 with ASan), so the "4-hour" soak never ran past 30
-# minutes. soak.yml budgets 320 minutes, which is what the name here claims.
+# HQM fork, two deliberate divergences from upstream:
+#
+#   1. The weekly cron is REMOVED, and the workflow is disabled in GitHub
+#      (`gh workflow disable nightly-soak.yml`). A 4-hour soak every Sunday is
+#      the single largest consumer in a shared ~3000 min/month Actions budget,
+#      and this fork validates locally (scripts/build.sh + the test suite)
+#      rather than on hosted runners. The soak stays available on demand once
+#      re-enabled, so nothing is lost — it just cannot fire on its own, by two
+#      independent means. Removing a cron stops the schedule; it does not
+#      disable the workflow, which is why both are done.
+#
+#   2. `duration_minutes` is `type: string`, not `type: number`. A
+#      workflow_dispatch input accepts only boolean, choice, environment and
+#      string; `number` is legal for workflow_call inputs and nowhere else, so
+#      declaring it here is a schema error — and a misleading one, because GitHub
+#      hands every dispatch input to the workflow as a string regardless of what
+#      the type claims. Upstream carries `type: number` here; we fixed that in
+#      dce7050c and the fix survives this merge on purpose. Worth offering back.
+#
+# Resolved on 2026-07-31 in favour of upstream's structure: our older comment
+# said this file "delegates to soak.yml, not _soak.yml" because _soak.yml's jobs
+# hard-capped at 30 minutes (45 with ASan), so the "4-hour" soak never ran past
+# 30. Upstream fixed that properly — soak.yml is retired and _soak.yml now
+# budgets 560 — so the workaround is obsolete and their version is the better
+# one. Only the two divergences above are ours.
+#
+# Upstream's `push: branches: ['qa/soak-**']` trigger is kept as-is: this fork
+# pushes no qa/soak-** branches, so it cannot fire, and dropping it would be a
+# gratuitous divergence in a file worth keeping mergeable.
 name: Nightly Soak
 
 on:
   workflow_dispatch:
     inputs:
       duration_minutes:
-        # `string`, not `number`: workflow_dispatch accepts only boolean, choice,
-        # environment and string. `number` is legal for workflow_call inputs and
-        # nowhere else, so declaring it here is a schema error — and a misleading
-        # one, because GitHub hands every dispatch input to the workflow as a
-        # string regardless of what the type says.
-        description: 'Soak duration in minutes (default: 240 = 4h)'
+        description: 'Soak duration in minutes PER LEG (default: 240 = 4h)'
         type: string
         default: '240'
+      legs:
+        description: 'Soak legs (query-leak = the #581 detector alone)'
+        type: choice
+        options: ['quick,query-leak', 'quick', 'query-leak']
+        default: 'quick,query-leak'
+      run_asan:
+        description: 'Also run the 15-min ASan soak legs'
+        type: boolean
+        default: true
+  # Iteration convenience carried over from soak.yml: pushing a qa/soak-**
+  # branch starts a real run from that branch's own copy of the workflows.
+  push:
+    branches: ['qa/soak-**']
 
 permissions:
   contents: read
 
 jobs:
   soak:
-    uses: ./.github/workflows/soak.yml
+    uses: ./.github/workflows/_soak.yml
     with:
-      # fromJSON, because soak.yml's workflow_call input really is `number` and
-      # the dispatch value arrives as a string. `${{ inputs.x || 240 }}` yields
-      # that string, which is a type mismatch the call rejects.
+      # On a push event the inputs context is empty — fall back to the same
+      # defaults the retired cron used (4h, both legs, ASan on).
+      #
+      # fromJSON, because _soak.yml's workflow_call input really is `number`
+      # while a dispatch value always arrives as a string. `${{ inputs.x || 240 }}`
+      # yields that string, and the call rejects it as a type mismatch. This is
+      # the other half of the dce7050c fix and it has to survive the merge with
+      # the `type: string` above — one without the other is broken either way.
       duration_minutes: ${{ fromJSON(inputs.duration_minutes || '240') }}
-      # soak.yml's inputs are duration_minutes + mode. It has no `run_asan`:
-      # ASan is decided inside its own job matrix, not by the caller. Passing
-      # run_asan here was an undeclared input and would have failed the call.
-      mode: query-leak
+      legs: ${{ inputs.legs || 'quick,query-leak' }}
+      run_asan: ${{ github.event_name != 'workflow_dispatch' || inputs.run_asan }}

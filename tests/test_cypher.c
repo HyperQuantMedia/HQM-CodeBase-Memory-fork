@@ -5,8 +5,11 @@
  * Covers lexer, parser, and end-to-end execution.
  */
 #include "test_framework.h"
+#include "../src/foundation/compat.h"
+#include "../src/foundation/compat_thread.h"
 #include <cypher/cypher.h>
 #include <store/store.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -489,6 +492,189 @@ TEST(cypher_exec_match_all_functions) {
     PASS();
 }
 
+/* Regression: an OPTIONAL MATCH whose label matches zero nodes drove
+ * cross_join_nodes with extra_count == 0. The old allocation
+ * (bind_count * 0 + 1) reserved a single binding slot, but the OPTIONAL
+ * fallback then wrote one binding per existing row — a heap buffer overflow
+ * once the first MATCH bound more than one node (ASan: heap-buffer-overflow).
+ * (The same function also used a plain-int bind_count*extra_count product,
+ * which wraps to a tiny malloc on large graphs; the count is now computed and
+ * bounds-checked in size_t by cbm_cypher_cross_join_alloc — exercised at its
+ * arithmetic boundary by cypher_cross_join_alloc_rejects_overflow below.)
+ * The query text is agent-controlled via the MCP query tool. */
+TEST(cypher_exec_optional_empty_label_no_overflow) {
+    cbm_store_t *s = setup_cypher_store(); /* 4 Function nodes */
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(
+        s, "MATCH (a:Function) OPTIONAL MATCH (b:NoSuchLabel) RETURN a.name", "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    /* One row per Function, each with b left unbound (dead-code semantics). */
+    ASSERT_EQ(r.row_count, 4);
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* Regression: expand_pattern_rels sized its OPTIONAL-expansion output buffer as
+ * bind_cap*10 + 1 — room for the bounded expansion (max_new = bind_cap*10) plus
+ * a SINGLE OPTIONAL fallback row. When one source saturated the expansion to
+ * max_new and two or more later sources took the OPTIONAL (no-match) path, the
+ * second fallback write ran past the allocation (ASan: heap-buffer-overflow).
+ *
+ * The fix sizes the buffer for both writers losslessly (max_new + *bind_count),
+ * so every OPTIONAL no-match row keeps its slot — no overflow AND no dropped
+ * rows. Here the hub saturates the expansion to max_new while all 20 leaves take
+ * the fallback; the buffer holds them all, and the max_rows LIMIT bounds only the
+ * OUTPUT. Query text is agent-controlled via the MCP query tool. */
+TEST(cypher_exec_optional_rel_saturated_no_overflow) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+
+    /* 1 hub + 20 leaf Function nodes → bind_cap = 21, max_new = 210, so the hop
+     * buffer holds max_new + *bind_count = 231 rows. The hub is inserted first so
+     * it is expanded before the leaves; it saturates the expansion to max_new,
+     * then each of the 20 leaves adds one OPTIONAL fallback row — under the old
+     * alloc (211 slots) the 2nd such write overflowed; now all 230 fit. */
+    cbm_node_t hub = {
+        .project = "test", .label = "Function", .name = "hub", .qualified_name = "test.hub"};
+    int64_t hub_id = cbm_store_upsert_node(s, &hub);
+    for (int i = 0; i < 20; i++) {
+        char nm[32];
+        char qn[48];
+        snprintf(nm, sizeof(nm), "leaf%02d", i);
+        snprintf(qn, sizeof(qn), "test.leaf%02d", i);
+        cbm_node_t leaf = {
+            .project = "test", .label = "Function", .name = nm, .qualified_name = qn};
+        cbm_store_upsert_node(s, &leaf);
+    }
+
+    /* Give the hub 300 CALLS edges (> max_new = 210) so its expansion saturates
+     * max_new; targets are non-Function so they don't inflate bind_cap. */
+    for (int i = 0; i < 300; i++) {
+        char nm[32];
+        char qn[48];
+        snprintf(nm, sizeof(nm), "callee%d", i);
+        snprintf(qn, sizeof(qn), "test.callee%d", i);
+        cbm_node_t callee = {.project = "test", .label = "Var", .name = nm, .qualified_name = qn};
+        int64_t cid = cbm_store_upsert_node(s, &callee);
+        cbm_edge_t e = {.project = "test", .source_id = hub_id, .target_id = cid, .type = "CALLS"};
+        cbm_store_insert_edge(s, &e);
+    }
+
+    /* max_rows below the Function count (21) so bind_cap tracks scan_count (21)
+     * rather than the 100000 result ceiling — the same regime a large repo
+     * (> ceiling functions) or an agent-supplied small limit hits. */
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s, "MATCH (a:Function) OPTIONAL MATCH (a)-[:CALLS]->(b) RETURN a.name", "test", 5, &r);
+    /* Bounded success, no overflow (ASan proves the buffer holds every row); the
+     * LIMIT caps the output rows rather than the query crashing. */
+    ASSERT_EQ(rc, 0);
+    ASSERT_GT(r.row_count, 0);
+    ASSERT_TRUE(r.row_count <= 5);
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* Arithmetic-boundary companion to the zero-label overflow above: the node
+ * cross-join sizes its buffer from bind_count * extra_count. As a plain int that
+ * product wraps past INT_MAX to a negative/garbage malloc size (the large-graph
+ * #627 failure mode). cbm_cypher_cross_join_alloc now computes it in size_t and
+ * rejects a count that would not fit the int binding counter or overflow the
+ * byte size. Tested directly so the boundary is exercised without allocating
+ * billions of bindings. */
+TEST(cypher_cross_join_alloc_rejects_overflow) {
+    size_t n = 0;
+
+    /* 46341 * 46341 = 2147488281 > INT_MAX (2147483647): pre-fix the int product
+     * wrapped negative -> tiny malloc -> heap OOB. Now rejected. */
+    ASSERT_TRUE(cbm_cypher_cross_join_alloc(46341, 46341, false, &n) != 0);
+
+    /* A normal join still succeeds: bind_count * extra_count + 1 slots. */
+    ASSERT_EQ(cbm_cypher_cross_join_alloc(4, 3, false, &n), 0);
+    ASSERT_EQ(n, (size_t)13);
+
+    /* OPTIONAL with no extra nodes reserves one fallback row per binding + 1. */
+    ASSERT_EQ(cbm_cypher_cross_join_alloc(4, 0, true, &n), 0);
+    ASSERT_EQ(n, (size_t)5);
+
+    /* Non-OPTIONAL with no extra nodes: just the sentinel slot. */
+    ASSERT_EQ(cbm_cypher_cross_join_alloc(4, 0, false, &n), 0);
+    ASSERT_EQ(n, (size_t)1);
+
+    PASS();
+}
+
+/* Companion to the truncation regression: when the expansion does NOT saturate
+ * the ceiling, every leaf's OPTIONAL fallback row must survive with its target
+ * unbound. A `row_count > 0` check is too weak — it can pass on hub rows alone —
+ * so this asserts a specific leaf appears with an empty b.name, and that a real
+ * expanded hub row is present too. */
+TEST(cypher_exec_optional_rel_leaf_fallback_survives) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+
+    /* 1 hub (2 CALLS edges) + 3 leaves (no edges). max_rows 0 is defaulted to
+     * CYPHER_RESULT_CEILING (100000) in cbm_cypher_execute before bind_cap is
+     * computed, so bind_cap = max(scan_count, 100000) = 100000 and the buffer is
+     * far larger than needed here — this exercises the fallback rows, not the
+     * saturation edge. */
+    cbm_node_t hub = {
+        .project = "test", .label = "Function", .name = "hub", .qualified_name = "test.hub"};
+    int64_t hub_id = cbm_store_upsert_node(s, &hub);
+    for (int i = 0; i < 3; i++) {
+        char nm[32];
+        char qn[48];
+        snprintf(nm, sizeof(nm), "leaf%d", i);
+        snprintf(qn, sizeof(qn), "test.leaf%d", i);
+        cbm_node_t leaf = {
+            .project = "test", .label = "Function", .name = nm, .qualified_name = qn};
+        cbm_store_upsert_node(s, &leaf);
+    }
+    for (int i = 0; i < 2; i++) {
+        char nm[32];
+        char qn[48];
+        snprintf(nm, sizeof(nm), "callee%d", i);
+        snprintf(qn, sizeof(qn), "test.callee%d", i);
+        cbm_node_t callee = {.project = "test", .label = "Var", .name = nm, .qualified_name = qn};
+        int64_t cid = cbm_store_upsert_node(s, &callee);
+        cbm_edge_t e = {.project = "test", .source_id = hub_id, .target_id = cid, .type = "CALLS"};
+        cbm_store_insert_edge(s, &e);
+    }
+
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s, "MATCH (a:Function) OPTIONAL MATCH (a)-[:CALLS]->(b) RETURN a.name, b.name", "test", 0,
+        &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.col_count, 2);
+
+    /* Scan for a leaf fallback row (a.name = "leaf0", b.name unbound = "") and a
+     * real expanded hub row (a.name = "hub", b.name non-empty). */
+    bool leaf_fallback = false;
+    bool hub_expanded = false;
+    for (int i = 0; i < r.row_count; i++) {
+        const char *a = r.rows[i][0];
+        const char *b = r.rows[i][1];
+        if (strcmp(a, "leaf0") == 0 && b[0] == '\0') {
+            leaf_fallback = true;
+        }
+        if (strcmp(a, "hub") == 0 && b[0] != '\0') {
+            hub_expanded = true;
+        }
+    }
+    ASSERT_TRUE(leaf_fallback); /* the OPTIONAL no-match row survived */
+    ASSERT_TRUE(hub_expanded);  /* the expansion still produced bound rows */
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_exec_where_eq) {
     cbm_store_t *s = setup_cypher_store();
     cbm_cypher_result_t r = {0};
@@ -499,6 +685,153 @@ TEST(cypher_exec_where_eq) {
     ASSERT_EQ(r.row_count, 1);
 
     cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #874: coalesce(var.prop, literal) in WHERE — null-safe numeric filters
+ * for audit queries over OPTIONAL graph properties. The parser rejected the
+ * call outright ("unexpected operator"); RETURN-side coalesce already
+ * worked, so only the WHERE leaf needs it. Semantics: when the property is
+ * missing/empty, the literal default is compared instead. */
+/* #797: variable-length / repeated-variable path semantics. Fixture:
+ * loopy has a SELF-LOOP as one of its outbound CALLS edges plus a real
+ * 2-chain loopy->mid->leaf. Correct openCypher semantics:
+ *  - a repeated node variable must unify: (a)-[:CALLS]->(a) matches ONLY
+ *    the self-loop, not every edge;
+ *  - relationship uniqueness within a path: the self-loop cannot be
+ *    traversed repeatedly, so no *k..k path exists beyond the real chain;
+ *  - the engine hop cap must not fabricate or silently truncate results. */
+TEST(cypher_exec_varlength_path_semantics_issue797) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+    cbm_node_t loopy = {.project = "test",
+                        .label = "Function",
+                        .name = "loopy",
+                        .qualified_name = "test.mod.loopy",
+                        .file_path = "mod.go",
+                        .start_line = 1,
+                        .end_line = 2};
+    cbm_node_t mid = {.project = "test",
+                      .label = "Function",
+                      .name = "mid",
+                      .qualified_name = "test.mod.mid",
+                      .file_path = "mod.go",
+                      .start_line = 3,
+                      .end_line = 4};
+    cbm_node_t leaf = {.project = "test",
+                       .label = "Function",
+                       .name = "leaf",
+                       .qualified_name = "test.mod.leaf",
+                       .file_path = "mod.go",
+                       .start_line = 5,
+                       .end_line = 6};
+    int64_t id_loopy = cbm_store_upsert_node(s, &loopy);
+    int64_t id_mid = cbm_store_upsert_node(s, &mid);
+    int64_t id_leaf = cbm_store_upsert_node(s, &leaf);
+    ASSERT_GT(id_loopy, 0);
+    cbm_edge_t self_loop = {
+        .project = "test", .source_id = id_loopy, .target_id = id_loopy, .type = "CALLS"};
+    cbm_edge_t e1 = {
+        .project = "test", .source_id = id_loopy, .target_id = id_mid, .type = "CALLS"};
+    cbm_edge_t e2 = {.project = "test", .source_id = id_mid, .target_id = id_leaf, .type = "CALLS"};
+    cbm_store_insert_edge(s, &self_loop);
+    cbm_store_insert_edge(s, &e1);
+    cbm_store_insert_edge(s, &e2);
+
+    /* Bug 1: repeated variable must unify — only the self-loop matches. */
+    cbm_cypher_result_t r1 = {0};
+    ASSERT_EQ(cbm_cypher_execute(s, "MATCH (a)-[:CALLS]->(a) RETURN a.name", "test", 0, &r1), 0);
+    ASSERT_EQ(r1.row_count, 1);
+    cbm_cypher_result_free(&r1);
+
+    /* Bug 2: *2..2 from loopy — only the REAL 2-chain (leaf); the self-loop
+     * must not be reused to pad paths (relationship uniqueness). */
+    cbm_cypher_result_t r2 = {0};
+    ASSERT_EQ(cbm_cypher_execute(s,
+                                 "MATCH (a {name: \"loopy\"})-[:CALLS*2..2]->(b) "
+                                 "RETURN DISTINCT b.name",
+                                 "test", 0, &r2),
+              0);
+    ASSERT_EQ(r2.row_count, 1); /* leaf only */
+    cbm_cypher_result_free(&r2);
+
+    /* Bug 2 amplifier: no directed path of length 5 exists at all. */
+    cbm_cypher_result_t r3 = {0};
+    ASSERT_EQ(cbm_cypher_execute(s,
+                                 "MATCH (a {name: \"loopy\"})-[:CALLS*5..5]->(b) "
+                                 "RETURN b.name",
+                                 "test", 0, &r3),
+              0);
+    ASSERT_EQ(r3.row_count, 0);
+    cbm_cypher_result_free(&r3);
+
+    /* Bug 3: a hop range beyond the engine ceiling must be an ADVERTISED
+     * clamp, not silently indistinguishable from "no such path". */
+    cbm_cypher_result_t r4 = {0};
+    ASSERT_EQ(
+        cbm_cypher_execute(s, "MATCH (a)-[:CALLS*150..150]->(b) RETURN b.name", "test", 0, &r4), 0);
+    ASSERT_EQ(r4.row_count, 0);
+    ASSERT_NOT_NULL(r4.warning);
+    ASSERT_NOT_NULL(strstr(r4.warning, "clamped"));
+    cbm_cypher_result_free(&r4);
+
+    cbm_store_close(s);
+    PASS();
+}
+
+TEST(cypher_exec_where_coalesce_issue874) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+    cbm_node_t a = {.project = "test",
+                    .label = "Function",
+                    .name = "deep_a",
+                    .qualified_name = "test.mod.deep_a",
+                    .file_path = "mod.py",
+                    .start_line = 1,
+                    .end_line = 2,
+                    .properties_json = "{\"transitive_loop_depth\":3}"};
+    cbm_node_t b = {.project = "test",
+                    .label = "Function",
+                    .name = "deep_b",
+                    .qualified_name = "test.mod.deep_b",
+                    .file_path = "mod.py",
+                    .start_line = 3,
+                    .end_line = 4,
+                    .properties_json = "{\"transitive_loop_depth\":1}"};
+    cbm_node_t c = {.project = "test",
+                    .label = "Function",
+                    .name = "plain_c",
+                    .qualified_name = "test.mod.plain_c",
+                    .file_path = "mod.py",
+                    .start_line = 5,
+                    .end_line = 6};
+    ASSERT_GT(cbm_store_upsert_node(s, &a), 0);
+    ASSERT_GT(cbm_store_upsert_node(s, &b), 0);
+    ASSERT_GT(cbm_store_upsert_node(s, &c), 0);
+
+    /* Default FAILS the predicate: only the node with depth 3 matches. */
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) WHERE "
+                                "coalesce(f.transitive_loop_depth, 0) >= 2 "
+                                "RETURN f.qualified_name LIMIT 10",
+                                "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1);
+    cbm_cypher_result_free(&r);
+
+    /* Default PASSES: the property-less node is included via the default. */
+    cbm_cypher_result_t r2 = {0};
+    rc = cbm_cypher_execute(s,
+                            "MATCH (f:Function) WHERE "
+                            "coalesce(f.transitive_loop_depth, 9) >= 2 "
+                            "RETURN f.qualified_name LIMIT 10",
+                            "test", 0, &r2);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r2.row_count, 2); /* deep_a (3) + plain_c (default 9) */
+    cbm_cypher_result_free(&r2);
+
     cbm_store_close(s);
     PASS();
 }
@@ -686,6 +1019,123 @@ TEST(cypher_func_multiarg) {
     ASSERT_STR_EQ(r.rows[0][4], "fallback");  /* coalesce: f.missing empty -> literal */
     cbm_cypher_result_free(&r);
     cbm_store_close(s);
+    PASS();
+}
+
+/* issue #874: coalesce() in WHERE — null-safe numeric filter over an optional
+ * JSON property. Exact repro shape from the issue: nodes lacking the property
+ * fall back to the literal default instead of failing to parse. */
+TEST(cypher_issue874_where_coalesce_numeric) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+    cbm_node_t n1 = {.project = "test",
+                     .label = "Function",
+                     .name = "DeepLoop",
+                     .qualified_name = "test.DeepLoop",
+                     .file_path = "deep.go",
+                     .properties_json = "{\"transitive_loop_depth\":5}"};
+    cbm_node_t n2 = {.project = "test",
+                     .label = "Function",
+                     .name = "NoMetrics",
+                     .qualified_name = "test.NoMetrics",
+                     .file_path = "flat.go"};
+    cbm_store_upsert_node(s, &n1);
+    cbm_store_upsert_node(s, &n2);
+
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) "
+                                "WHERE coalesce(f.transitive_loop_depth, 0) >= 2 "
+                                "RETURN f.qualified_name LIMIT 10",
+                                "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1); /* only DeepLoop; NoMetrics coalesces to 0 */
+    ASSERT_STR_EQ(r.rows[0][0], "test.DeepLoop");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* issue #874: coalesce() in WHERE with a string fallback and first-arg-wins. */
+TEST(cypher_issue874_where_coalesce_string) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+
+    /* Missing property on every node → fallback literal matches all 4 Functions */
+    int rc = cbm_cypher_execute(
+        s,
+        "MATCH (f:Function) WHERE coalesce(f.missing, \"fallback\") = \"fallback\" "
+        "RETURN f.name",
+        "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 4);
+    cbm_cypher_result_free(&r);
+
+    /* Present first arg wins over the fallback */
+    cbm_cypher_result_t r2 = {0};
+    rc = cbm_cypher_execute(
+        s, "MATCH (f:Function) WHERE coalesce(f.name, \"zz\") = \"HandleOrder\" RETURN f.name",
+        "test", 0, &r2);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r2.row_count, 1);
+    ASSERT_STR_EQ(r2.rows[0][0], "HandleOrder");
+    cbm_cypher_result_free(&r2);
+
+    cbm_store_close(s);
+    PASS();
+}
+
+/* issue #874: function LHS composes with NOT and AND like any other condition. */
+TEST(cypher_issue874_where_coalesce_not_and) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(
+        s, "MATCH (f:Function) WHERE NOT coalesce(f.missing, \"x\") = \"x\" RETURN f.name", "test",
+        0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 0); /* every node coalesces to "x" — NOT filters all */
+    cbm_cypher_result_free(&r);
+
+    cbm_cypher_result_t r2 = {0};
+    rc = cbm_cypher_execute(s,
+                            "MATCH (f:Function) WHERE coalesce(f.missing, \"1\") = \"1\" "
+                            "AND f.name CONTAINS \"Order\" RETURN f.name",
+                            "test", 0, &r2);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r2.row_count, 3); /* HandleOrder, ValidateOrder, SubmitOrder */
+    cbm_cypher_result_free(&r2);
+
+    cbm_store_close(s);
+    PASS();
+}
+
+/* issue #874: the other multi-arg scalar functions work in WHERE too. */
+TEST(cypher_issue874_where_substring) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s, "MATCH (f:Function) WHERE substring(f.name, 0, 6) = \"Handle\" RETURN f.name", "test", 0,
+        &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "HandleOrder");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* issue #874: an unrecognised function in WHERE must fail loudly with the
+ * supported set, not the misleading "unexpected operator". */
+TEST(cypher_issue874_where_unsupported_func_error) {
+    cbm_query_t *q = NULL;
+    char *err = NULL;
+    int rc =
+        cbm_cypher_parse("MATCH (f:Function) WHERE foo(f.name) = \"x\" RETURN f.name", &q, &err);
+    ASSERT_EQ(rc, -1);
+    ASSERT_NOT_NULL(err);
+    ASSERT_TRUE(strstr(err, "unsupported function 'foo'") != NULL);
+    free(err);
     PASS();
 }
 
@@ -1317,6 +1767,116 @@ TEST(cypher_edge_prop_access) {
 
     cbm_cypher_result_free(&r);
     cbm_store_close(s);
+    PASS();
+}
+
+typedef struct {
+    atomic_int *ready;
+    atomic_int *start;
+    bool succeeded;
+} cypher_edge_thread_ctx_t;
+
+static void *cypher_edge_props_concurrently(void *opaque) {
+    cypher_edge_thread_ctx_t *ctx = opaque;
+    cbm_store_t *store = setup_cypher_http_store();
+    if (!store) {
+        return NULL;
+    }
+
+    /* Keep projection busy after the store scan has completed.  A single-edge
+     * query can be incidentally ordered by SQLite's internal mutexes, masking
+     * the independent Cypher scratch-buffer race from TSan. */
+    cbm_node_t source = {.project = "test",
+                         .label = "Function",
+                         .name = "HandleOrder",
+                         .qualified_name = "test.main.HandleOrder",
+                         .file_path = "main.go",
+                         .start_line = 10,
+                         .end_line = 30};
+    int64_t source_id = cbm_store_upsert_node(store, &source);
+    for (int i = 0; i < 256; i++) {
+        char name[64];
+        char qualified_name[96];
+        snprintf(name, sizeof(name), "ConcurrentTarget%d", i);
+        snprintf(qualified_name, sizeof(qualified_name), "test.concurrent.%s", name);
+        cbm_node_t target = {.project = "test",
+                             .label = "Function",
+                             .name = name,
+                             .qualified_name = qualified_name,
+                             .file_path = "concurrent.go"};
+        int64_t target_id = cbm_store_upsert_node(store, &target);
+        cbm_edge_t edge = {
+            .project = "test",
+            .source_id = source_id,
+            .target_id = target_id,
+            .type = "HTTP_CALLS",
+            .properties_json =
+                "{\"url_path\":\"/api/orders\",\"confidence\":0.85,\"method\":\"POST\"}"};
+        if (source_id < 0 || target_id < 0 || cbm_store_insert_edge(store, &edge) < 0) {
+            cbm_store_close(store);
+            return NULL;
+        }
+    }
+
+    atomic_fetch_add_explicit(ctx->ready, 1, memory_order_release);
+    while (atomic_load_explicit(ctx->start, memory_order_acquire) == 0) {
+        cbm_usleep(1000);
+    }
+    ctx->succeeded = true;
+    for (int i = 0; i < 128; i++) {
+        cbm_cypher_result_t result = {0};
+        int rc = cbm_cypher_execute(store,
+                                    "MATCH (a:Function)-[r:HTTP_CALLS]->(b:Function) "
+                                    "RETURN r.url_path, r.confidence, r.method",
+                                    "test", 0, &result);
+        if (rc != 0 || result.row_count != 257 ||
+            strcmp(cypher_get_col(&result, 0, "r.url_path"), "/api/orders") != 0 ||
+            strcmp(cypher_get_col(&result, 0, "r.confidence"), "0.85") != 0 ||
+            strcmp(cypher_get_col(&result, 0, "r.method"), "POST") != 0) {
+            ctx->succeeded = false;
+        }
+        cbm_cypher_result_free(&result);
+        if (!ctx->succeeded) {
+            break;
+        }
+    }
+    cbm_store_close(store);
+    return NULL;
+}
+
+/* Daemon sessions execute independent graph queries concurrently. TSan must
+ * see no shared rotating edge-property scratch buffer between those threads. */
+TEST(cypher_edge_prop_storage_is_per_thread) {
+    atomic_int ready;
+    atomic_int start;
+    atomic_init(&ready, 0);
+    atomic_init(&start, 0);
+    cypher_edge_thread_ctx_t ctx[2] = {
+        {.ready = &ready, .start = &start},
+        {.ready = &ready, .start = &start},
+    };
+    cbm_thread_t threads[2];
+    bool started0 = cbm_thread_create(&threads[0], 0, cypher_edge_props_concurrently, &ctx[0]) == 0;
+    bool started1 = cbm_thread_create(&threads[1], 0, cypher_edge_props_concurrently, &ctx[1]) == 0;
+    for (int spins = 0; started0 && started1 && spins < 5000 &&
+                        atomic_load_explicit(&ready, memory_order_acquire) < 2;
+         spins++) {
+        cbm_usleep(1000);
+    }
+    bool both_ready = atomic_load_explicit(&ready, memory_order_acquire) == 2;
+    atomic_store_explicit(&start, 1, memory_order_release);
+    if (started0) {
+        (void)cbm_thread_join(&threads[0]);
+    }
+    if (started1) {
+        (void)cbm_thread_join(&threads[1]);
+    }
+
+    ASSERT_TRUE(started0);
+    ASSERT_TRUE(started1);
+    ASSERT_TRUE(both_ready);
+    ASSERT_TRUE(ctx[0].succeeded);
+    ASSERT_TRUE(ctx[1].succeeded);
     PASS();
 }
 
@@ -2092,6 +2652,28 @@ TEST(cypher_exec_count_star) {
     PASS();
 }
 
+/* #1111: type(r) grouped with count(*) must return the actual relationship type,
+ * not the row count. ret_agg_build_key/ret_agg_emit_row classified aggregate vs.
+ * scalar columns with a bare `item->func` truthy check, so type(r) (a non-aggregate
+ * function, func != NULL) was misrouted into the aggregate-value branch and
+ * formatted via format_agg_value's default case, silently substituting the row
+ * count for the relationship type. */
+TEST(cypher_issue1111_return_type_count_group) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s, "MATCH (a)-[r]->(b) RETURN type(r) AS t, count(*) AS n ORDER BY n DESC", "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 2);
+    ASSERT_STR_EQ(r.rows[0][0], "CALLS");
+    ASSERT_STR_EQ(r.rows[0][1], "3");
+    ASSERT_STR_EQ(r.rows[1][0], "DEFINES");
+    ASSERT_STR_EQ(r.rows[1][1], "1");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_parse_skip) {
     cbm_query_t *q = NULL;
     char *err = NULL;
@@ -2271,6 +2853,51 @@ TEST(cypher_exec_with_node_groupvar_prop) {
     ASSERT_EQ(r.row_count, 1);
     ASSERT_STR_EQ(r.rows[0][0], "validate.go"); /* was "" before the fix */
     ASSERT_STR_EQ(r.rows[0][1], "ValidateOrder");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #1111, WITH variant: the same misrouting in with_agg_build_key/with_agg_accumulate/
+ * execute_with_aggregate's per-column func check. */
+TEST(cypher_issue1111_with_type_count_group) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s,
+        "MATCH (a)-[r]->(b) WITH type(r) AS t, count(*) AS n RETURN t, n ORDER BY n DESC",
+        "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 2);
+    ASSERT_STR_EQ(r.rows[0][0], "CALLS");
+    ASSERT_STR_EQ(r.rows[0][1], "3");
+    ASSERT_STR_EQ(r.rows[1][0], "DEFINES");
+    ASSERT_STR_EQ(r.rows[1][1], "1");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #1111 follow-up (review from DeusData on #1221): with_agg_find_or_create's
+ * bare-node-carry check only tested `!property && variable`, so an entity-
+ * introspection alias like `labels(f) AS l` (variable set, property NULL, func
+ * set) was ALSO tagged with the source node's id. A later `l.file_path` then
+ * hit node_prop's stub re-fetch heuristic (id set, file_path/label both NULL on
+ * the virtual stub) and silently returned HandleOrder's real file_path instead
+ * of "" for the non-node alias `l`. */
+TEST(cypher_issue1111_with_scalar_func_alias_no_node_leak) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) WHERE f.name = \"HandleOrder\" "
+                                "WITH labels(f) AS l, COUNT(*) AS c "
+                                "RETURN l, l.file_path, c",
+                                "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "[\"Function\"]");
+    ASSERT_STR_EQ(r.rows[0][1], ""); /* was "handler.go" before the fix */
+    ASSERT_STR_EQ(r.rows[0][2], "1");
     cbm_cypher_result_free(&r);
     cbm_store_close(s);
     PASS();
@@ -2498,6 +3125,51 @@ TEST(cypher_parse_unwind_var) {
     PASS();
 }
 
+/* Regression: an UNWIND literal list whose element is longer than the 2KB
+ * assembly buffer used to overflow the stack. snprintf reports the length it
+ * WOULD have written, so blen ran past sizeof(buf) and the trailing
+ * buf[blen++]=']' / buf[blen]='\0' wrote out of bounds (ASan: stack-buffer-
+ * overflow). The query text is agent-controlled via the MCP query tool. */
+TEST(cypher_parse_unwind_oversized_literal_no_overflow) {
+    char query[4096];
+    char big[3000];
+    memset(big, 'a', sizeof(big) - 1);
+    big[sizeof(big) - 1] = '\0';
+    snprintf(query, sizeof(query), "UNWIND [\"%s\"] AS x MATCH (f) RETURN f.name", big);
+
+    cbm_query_t *q = NULL;
+    char *err = NULL;
+    int rc = cbm_cypher_parse(query, &q, &err);
+    /* Must not crash and must produce a NUL-terminated, in-bounds expression. */
+    ASSERT_EQ(rc, 0);
+    ASSERT_NOT_NULL(q->unwind_expr);
+    ASSERT_STR_EQ(q->unwind_alias, "x");
+    cbm_query_free(q);
+    PASS();
+}
+
+/* Regression: many oversized elements accumulate blen well past the buffer,
+ * which also underflowed the (size_t)(cap - blen) length passed to snprintf. */
+TEST(cypher_parse_unwind_many_elements_no_overflow) {
+    /* 200 elements (~20 chars each) accumulate well past the 2KB assembly
+     * buffer, which also underflowed the (size_t)(cap - blen) length. */
+    char query[8192];
+    int off = snprintf(query, sizeof(query), "UNWIND [");
+    for (int i = 0; i < 200; i++) {
+        off += snprintf(query + off, sizeof(query) - (size_t)off, "%s\"element_value_%d\"",
+                        i ? "," : "", i);
+    }
+    snprintf(query + off, sizeof(query) - (size_t)off, "] AS x MATCH (f) RETURN f.name");
+
+    cbm_query_t *q = NULL;
+    char *err = NULL;
+    int rc = cbm_cypher_parse(query, &q, &err);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NOT_NULL(q->unwind_expr);
+    cbm_query_free(q);
+    PASS();
+}
+
 /* ── Issue #389 group: Cypher feature reproductions ─────────────────
  * Each asserts the CORRECT behavior; a failure reproduces the bug. */
 
@@ -2523,6 +3195,52 @@ TEST(cypher_issue237_distinct_order_limit) {
     ASSERT_EQ(rc, 0);
     ASSERT_NULL(r.error);
     ASSERT_EQ(r.row_count, 1);
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #873: duplicate projected rows must be deduped before ORDER BY + LIMIT */
+TEST(cypher_issue873_distinct_order_limit_dedupes_before_limit) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s, "MATCH (n) RETURN DISTINCT n.label AS label ORDER BY label LIMIT 2", "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 2);
+    ASSERT_STR_EQ(r.rows[0][0], "Function");
+    ASSERT_STR_EQ(r.rows[1][0], "Module");
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #873: early LIMIT must not truncate rows before DISTINCT for simple RETURN */
+TEST(cypher_issue873_distinct_limit_dedupes_before_limit) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc =
+        cbm_cypher_execute(s, "MATCH (n) RETURN DISTINCT n.label AS label LIMIT 2", "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 2);
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #873: SKIP is applied after DISTINCT and ORDER BY, not before dedupe */
+TEST(cypher_issue873_distinct_order_skip_limit_dedupes_before_skip) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(
+        s, "MATCH (n) RETURN DISTINCT n.label AS label ORDER BY label SKIP 1 LIMIT 1", "test", 0,
+        &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "Module");
     cbm_cypher_result_free(&r);
     cbm_store_close(s);
     PASS();
@@ -2601,6 +3319,59 @@ TEST(cypher_multi_prop_projection_no_alias) {
  * forked child so a stack overwrite (ASan abort, or a raw segfault) shows up
  * as a killing signal instead of taking down the whole runner; the bounded
  * path returns an ordinary error and the child exits cleanly. */
+/* Property projection must return the WHOLE value of composite properties.
+ * json_extract_prop() scanned a non-string value up to the first ',' — so an
+ * array/object property was truncated at its first INTERNAL comma. Real-world
+ * hit: a NestJS handler's decorators
+ *   ["@Roles('OWNER', 'ADMIN')","@Get()"]
+ * projected as ["@Roles('OWNER'   — unusable for route/authz queries. */
+TEST(cypher_exec_prop_array_with_internal_commas) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+    cbm_node_t n = {.project = "test",
+                    .label = "Method",
+                    .name = "findAll",
+                    .qualified_name = "test.PacienteController.findAll",
+                    .file_path = "paciente.controller.ts",
+                    .properties_json =
+                        "{\"decorators\":[\"@Roles('OWNER', 'ADMIN')\",\"@Get()\"],\"lines\":3}"};
+    cbm_store_upsert_node(s, &n);
+
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s, "MATCH (m:Method) RETURN m.decorators, m.lines", "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1);
+    /* whole array, commas and all — was ["@Roles('OWNER' before the fix */
+    ASSERT_STR_EQ(r.rows[0][0], "[\"@Roles('OWNER', 'ADMIN')\",\"@Get()\"]");
+    ASSERT_STR_EQ(r.rows[0][1], "3"); /* scalar sibling still parses */
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* A string property must not end at an ESCAPED quote: the scan stopped at the
+ * first '"' regardless of a preceding backslash, cutting the value short. */
+TEST(cypher_exec_prop_string_with_escaped_quote) {
+    cbm_store_t *s = cbm_store_open_memory();
+    cbm_store_upsert_project(s, "test", "/tmp/test");
+    cbm_node_t n = {.project = "test",
+                    .label = "Function",
+                    .name = "parse",
+                    .qualified_name = "test.parse",
+                    .file_path = "p.ts",
+                    .properties_json = "{\"signature\":\"(sep: \\\"a,b\\\") => void\"}"};
+    cbm_store_upsert_node(s, &n);
+
+    cbm_cypher_result_t r = {0};
+    int rc = cbm_cypher_execute(s, "MATCH (f:Function) RETURN f.signature", "test", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "(sep: \\\"a,b\\\") => void"); /* was: (sep: \ */
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_wide_return_projection_bounded) {
 #ifdef _WIN32
     SKIP_PLATFORM("fork crash-isolation is POSIX-only; the parse-time bound is platform-agnostic");
@@ -2632,6 +3403,54 @@ TEST(cypher_wide_return_projection_bounded) {
     ASSERT_TRUE(WIFEXITED(status));
     PASS();
 #endif
+}
+
+/* #601: an unbounded whole-graph OPTIONAL MATCH / GROUP BY does
+ * O(bindings x groups) work and can run for minutes with no wall-clock guard —
+ * the 100k row ceiling never fires because no rows are produced, so query_graph
+ * just hangs. With the execution deadline armed to trip immediately (budget 0),
+ * the runaway query must abort with a clear error instead of returning a
+ * (misleading, possibly partial) result.
+ *
+ * RED on unfixed code: no deadline exists, so the query completes and returns
+ * rc==0 with rows and no error — the assertions below fail. */
+TEST(cypher_exec_deadline_aborts_runaway_query_issue601) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+
+    cbm_cypher_test_set_deadline_ms(0); /* trip on the first hot-loop check */
+    int rc = cbm_cypher_execute(
+        s, "MATCH (a) OPTIONAL MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name, count(b)", "test",
+        0, &r);
+    cbm_cypher_test_set_deadline_ms(-1); /* restore default before asserting (thread-local) */
+
+    ASSERT_TRUE(rc != 0); /* CBM_NOT_FOUND (-1) — query aborted, not success */
+    ASSERT_NOT_NULL(r.error);
+    ASSERT_TRUE(strstr(r.error, "time limit") != NULL);
+    ASSERT_EQ(r.row_count, 0);
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+/* #601 companion: the default (ample) budget must NOT false-positive on a
+ * normal small query — it still returns its rows. */
+TEST(cypher_exec_deadline_allows_normal_query_issue601) {
+    cbm_store_t *s = setup_cypher_store();
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(
+        s, "MATCH (a) OPTIONAL MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name, count(b)", "test",
+        0, &r);
+
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(r.error == NULL);
+    ASSERT_GT(r.row_count, 0);
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
 }
 
 /* ══════════════════════════════════════════════════════════════════ */
@@ -2666,12 +3485,23 @@ SUITE(cypher) {
     RUN_TEST(cypher_parse_inline_props);
     RUN_TEST(cypher_parse_error);
     /* Execution */
+    RUN_TEST(cypher_exec_deadline_aborts_runaway_query_issue601);
+    RUN_TEST(cypher_exec_deadline_allows_normal_query_issue601);
     RUN_TEST(cypher_exec_match_all_functions);
+    RUN_TEST(cypher_exec_optional_empty_label_no_overflow);
+    RUN_TEST(cypher_cross_join_alloc_rejects_overflow);
+    RUN_TEST(cypher_exec_optional_rel_saturated_no_overflow);
+    RUN_TEST(cypher_exec_optional_rel_leaf_fallback_survives);
     RUN_TEST(cypher_issue240_labels_function);
     RUN_TEST(cypher_issue237_distinct_order_limit);
+    RUN_TEST(cypher_issue873_distinct_order_limit_dedupes_before_limit);
+    RUN_TEST(cypher_issue873_distinct_limit_dedupes_before_limit);
+    RUN_TEST(cypher_issue873_distinct_order_skip_limit_dedupes_before_skip);
     RUN_TEST(cypher_issue252_tointeger);
     RUN_TEST(cypher_issue305_count_star_alias);
     RUN_TEST(cypher_exec_where_eq);
+    RUN_TEST(cypher_exec_varlength_path_semantics_issue797);
+    RUN_TEST(cypher_exec_where_coalesce_issue874);
     RUN_TEST(cypher_exec_where_regex);
     RUN_TEST(cypher_exec_where_contains);
     RUN_TEST(cypher_exec_where_starts_with);
@@ -2684,6 +3514,11 @@ SUITE(cypher) {
     RUN_TEST(cypher_func_tointeger_tofloat);
     RUN_TEST(cypher_func_size_reverse);
     RUN_TEST(cypher_func_multiarg);
+    RUN_TEST(cypher_issue874_where_coalesce_numeric);
+    RUN_TEST(cypher_issue874_where_coalesce_string);
+    RUN_TEST(cypher_issue874_where_coalesce_not_and);
+    RUN_TEST(cypher_issue874_where_substring);
+    RUN_TEST(cypher_issue874_where_unsupported_func_error);
     RUN_TEST(cypher_multi_prop_projection_no_alias);
     RUN_TEST(cypher_exists_no_callers);
     RUN_TEST(cypher_exists_has_outgoing_calls);
@@ -2712,6 +3547,7 @@ SUITE(cypher) {
     RUN_TEST(cypher_parse_where_numeric);
     /* Edge property tests (ported from cypher_test.go Feature 2) */
     RUN_TEST(cypher_edge_prop_access);
+    RUN_TEST(cypher_edge_prop_storage_is_per_thread);
     RUN_TEST(cypher_edge_prop_in_where);
     RUN_TEST(cypher_edge_type_prop);
     RUN_TEST(cypher_edge_filter_contains);
@@ -2764,6 +3600,7 @@ SUITE(cypher) {
     RUN_TEST(cypher_exec_max);
     RUN_TEST(cypher_exec_collect);
     RUN_TEST(cypher_exec_count_star);
+    RUN_TEST(cypher_issue1111_return_type_count_group);
     RUN_TEST(cypher_parse_skip);
     RUN_TEST(cypher_parse_sum_avg);
     RUN_TEST(cypher_parse_collect);
@@ -2777,6 +3614,8 @@ SUITE(cypher) {
     /* Phase 6: WITH clause */
     RUN_TEST(cypher_exec_with_rename);
     RUN_TEST(cypher_exec_with_count);
+    RUN_TEST(cypher_issue1111_with_type_count_group);
+    RUN_TEST(cypher_issue1111_with_scalar_func_alias_no_node_leak);
     RUN_TEST(cypher_exec_with_node_groupvar_prop);
     RUN_TEST(cypher_exec_with_where);
     RUN_TEST(cypher_exec_with_orderby_limit);
@@ -2795,5 +3634,10 @@ SUITE(cypher) {
     /* Phase 9: UNWIND */
     RUN_TEST(cypher_parse_unwind);
     RUN_TEST(cypher_parse_unwind_var);
+    RUN_TEST(cypher_parse_unwind_oversized_literal_no_overflow);
+    RUN_TEST(cypher_parse_unwind_many_elements_no_overflow);
     RUN_TEST(cypher_wide_return_projection_bounded);
+    /* Composite property projection (arrays/objects, escaped quotes) */
+    RUN_TEST(cypher_exec_prop_array_with_internal_commas);
+    RUN_TEST(cypher_exec_prop_string_with_escaped_quote);
 }
