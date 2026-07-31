@@ -51,25 +51,18 @@ import { colorForLabel, colorForStatus, setLabelColorOverrides } from "../lib/co
 import { downloadStaticPage } from "../lib/exportStatic";
 import { resolvedTheme, themeVar } from "../lib/theme";
 import { stageForTheme } from "../lib/sceneInk";
-import { loadFlag, loadWidth, saveFlag, saveWidth } from "../lib/panelState";
+import {
+  loadFlag,
+  loadNodeBudget,
+  loadWidth,
+  saveFlag,
+  saveNodeBudget,
+  saveWidth,
+} from "../lib/panelState";
 
-/* Panel widths and fold state live in lib/panelState.ts, shared with the size tab
- * so both tabs read and write the same keys. */
-
-/* Persist the node budget per project */
-function budgetKey(project: string): string {
-  return `cbm-node-budget:${project}`;
-}
-function loadNodeBudget(project: string): number {
-  try {
-    const v = localStorage.getItem(budgetKey(project));
-    if (v) return clampNodeBudget(parseInt(v, 10));
-  } catch { /* ignore */ }
-  return GRAPH_RENDER_NODE_LIMIT;
-}
-function saveNodeBudget(project: string, value: number) {
-  try { localStorage.setItem(budgetKey(project), String(value)); } catch { /* ignore */ }
-}
+/* Panel widths, fold state and the per-project node budget live in
+ * lib/panelState.ts, shared with the size tab so both tabs read and write the
+ * same keys (C10: one budget per project across both views). */
 
 interface GraphTabProps {
   project: string | null;
@@ -384,7 +377,7 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
   /* Re-read the persisted budget when the project changes… */
   useEffect(() => {
     if (project) {
-      const value = loadNodeBudget(project);
+      const value = loadNodeBudget(project, GRAPH_RENDER_NODE_LIMIT, clampNodeBudget);
       setBudget({ project, value });
       setBudgetDraft(String(value));
     }

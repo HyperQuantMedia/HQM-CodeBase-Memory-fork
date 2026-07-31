@@ -30,6 +30,30 @@ export function saveWidth(key: string, value: number) {
   }
 }
 
+/* C10: ONE node budget per project, shared by the graph and the size map — the
+ * backlog's "should the size map share the graph's node budget?" closed yes.
+ * The key is the graph tab's historical one, so nothing a user already set is
+ * lost. The clamp is the caller's (each view names its own grid), and an absent
+ * stored value falls back to the view's own default: sharing the SETTING is the
+ * ruling; the two defaults predate it and differ (graph 5,000 · size 8,000). */
+export function loadNodeBudget(
+  project: string,
+  fallback: number,
+  clamp: (v: number) => number,
+): number {
+  try {
+    const v = localStorage.getItem(`cbm-node-budget:${project}`);
+    if (v) return clamp(parseInt(v, 10));
+  } catch { /* ignore */ }
+  return fallback;
+}
+
+export function saveNodeBudget(project: string, value: number) {
+  try {
+    localStorage.setItem(`cbm-node-budget:${project}`, String(value));
+  } catch { /* private mode / quota — the budget just does not persist */ }
+}
+
 export function loadFlag(key: string, fallback: boolean): boolean {
   try {
     const v = localStorage.getItem(key);

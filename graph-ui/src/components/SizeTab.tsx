@@ -12,7 +12,12 @@ import {
   type SizeNode,
 } from "../lib/sizeMap";
 import { fileKind, KIND_COLORS, type FileKind } from "../lib/fileKind";
-import { drawnRadius, FOLDER_COLOR, sizeTreeToGraph } from "../lib/sizeGraph";
+import { DEFAULT_MAX_NODES, drawnRadius, FOLDER_COLOR, sizeTreeToGraph } from "../lib/sizeGraph";
+import {
+  clampNodeBudget,
+  GRAPH_NODE_BUDGET_MAX,
+  GRAPH_NODE_BUDGET_STEP,
+} from "../hooks/useGraphData";
 import { OpenButtons } from "./OpenButtons";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { GraphScene, computeCameraTarget, type CameraTarget } from "./GraphScene";
@@ -23,7 +28,14 @@ import { CollapsibleSection } from "./CollapsibleSection";
 import { ResizeHandle } from "./ResizeHandle";
 import { SizeTree } from "./SizeTree";
 import { GraphTabIcon } from "./TabIcons";
-import { loadFlag, loadWidth, saveFlag, saveWidth } from "../lib/panelState";
+import {
+  loadFlag,
+  loadNodeBudget,
+  loadWidth,
+  saveFlag,
+  saveNodeBudget,
+  saveWidth,
+} from "../lib/panelState";
 import { useSizeMapSphereProbe } from "../hooks/useSizeMapSphereProbe";
 import {
   APPEARANCE_DEFAULTS,
@@ -139,6 +151,26 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
   const [picked, setPicked] = useState<SizeNode | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [source, setSource] = useState<SizeSource>("disk");
+  /* C10: the node budget, shared per project with the graph tab (one key, one
+   * setting). Same control, same grid, same actionable notice — the hardcoded
+   * 8,000 survives only as the fallback when nothing is stored. */
+  const [budget, setBudget] = useState(DEFAULT_MAX_NODES);
+  const [budgetDraft, setBudgetDraft] = useState(String(DEFAULT_MAX_NODES));
+  useEffect(() => {
+    if (project) {
+      const value = loadNodeBudget(project, DEFAULT_MAX_NODES, clampNodeBudget);
+      setBudget(value);
+      setBudgetDraft(String(value));
+    }
+  }, [project]);
+  const commitBudget = useCallback(() => {
+    const parsed = clampNodeBudget(parseInt(budgetDraft, 10));
+    setBudgetDraft(String(parsed));
+    if (project && parsed !== budget) {
+      saveNodeBudget(project, parsed);
+      setBudget(parsed);
+    }
+  }, [budgetDraft, project, budget]);
   /* File kinds switched off. Exclusions rather than inclusions, so a kind that only
    * appears after drilling into a new folder is visible immediately. */
   const [mutedKinds, setMutedKinds] = useState<Set<FileKind>>(new Set());
@@ -314,8 +346,8 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
    * the scene exactly as it narrows the treemap — and keeps the node count down
    * without any special casing. */
   const sizeGraph = useMemo(
-    () => (view === "treemap" || !node ? null : sizeTreeToGraph(node)),
-    [view, node],
+    () => (view === "treemap" || !node ? null : sizeTreeToGraph(node, { maxNodes: budget })),
+    [view, node, budget],
   );
 
   /* Classifier chips: which file kinds the corpus holds, how many, how heavy.
@@ -761,6 +793,37 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 Clear selection
               </Button>
             )}
+            {/* C10: the graph tab's node-budget control, verbatim — same label,
+                same grid, same per-project key. Hidden on the treemap, which has
+                no node cap (its limit is the sliver filter, a different fact). */}
+            {view !== "treemap" && (
+              <div className="flex items-center gap-1.5 h-8 px-2 rounded-md border border-border/50 bg-card/80 backdrop-blur-sm">
+                <label
+                  htmlFor="size-node-budget"
+                  className="text-[10px] uppercase tracking-wider text-ink-soft"
+                >
+                  Nodes
+                </label>
+                <input
+                  id="size-node-budget"
+                  type="number"
+                  min={GRAPH_NODE_BUDGET_STEP}
+                  max={GRAPH_NODE_BUDGET_MAX}
+                  step={GRAPH_NODE_BUDGET_STEP}
+                  value={budgetDraft}
+                  onChange={(e) => setBudgetDraft(e.target.value)}
+                  onBlur={commitBudget}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  className="w-24 bg-transparent text-right text-xs font-mono text-info outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  aria-label="Node budget: how many nodes to draw"
+                  title="How many nodes to draw (5,000 steps, shared with the graph tab's budget)"
+                />
+              </div>
+            )}
             {/* One button cycling the four views, exactly like the graph's
                 projection cycle — not a four-button rail, which was a second kind of
                 control for the same job. */}
@@ -902,19 +965,22 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           {formatBytes(data.total_bytes)} indexed across{" "}
           {data.file_count.toLocaleString()} files
         </span>
+        {/* D11: the two causes stay distinct — the sliver filter and the node
+            budget are different facts, and conflating them was the bug. Each
+            notice fires only when ITS threshold was genuinely hit, names its own
+            cause, and reads as a warning: amber, 4px above the footer's type. */}
         {view === "treemap" && omitted > 0 && (
-          <span className="text-warning">
+          <span className="text-warning text-[14px]">
             {omitted.toLocaleString()} item{omitted === 1 ? "" : "s"} too small to draw at
-            this size
+            this size — drill in to see them
           </span>
         )}
-        {/* The projections cap their node count, so say what the cap dropped. A
-            truncated scene that stays silent reads as the whole corpus. */}
         {sizeGraph && sizeGraph.omitted > 0 && (
-          <span className="text-warning">
+          <span className="text-warning text-[14px]">
             {sizeGraph.omitted.toLocaleString()} lightest item
-            {sizeGraph.omitted === 1 ? "" : "s"} not drawn (
-            {formatBytes(sizeGraph.omittedBytes)}) — drill in to see them
+            {sizeGraph.omitted === 1 ? "" : "s"} over the {budget.toLocaleString()}-node
+            budget ({formatBytes(sizeGraph.omittedBytes)}) — raise the node budget or
+            drill in
           </span>
         )}
         {sizeGraph && (

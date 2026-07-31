@@ -91,7 +91,7 @@ export interface SizeGraphOptions {
  * few tens of thousands of instanced spheres. Capping by *weight* rather than by
  * traversal order is the point — the question this view answers is where the
  * bytes are, so the nodes that must survive a cap are the heavy ones. */
-const DEFAULT_MAX_NODES = 8000;
+export const DEFAULT_MAX_NODES = 8000;
 
 /* Median of a numeric array. Copies rather than sorting in place. */
 function median(values: number[]): number {
