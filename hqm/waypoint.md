@@ -3,18 +3,25 @@
 
 # Waypoint — HQM work in this fork
 
-Updated: 2026-07-30 · Focus set by: Rahul
+Updated: 2026-07-31 · Focus set by: Rahul
 
 Read this first if you are opening this repository cold. Everything below is HQM-owned work
 layered on the adopted upstream; see [`README.md`](README.md) for why this directory exists.
 
-**The next two modes are planning and bug tracking.** Two registers carry that, and they are
-where a session starts:
+**A cycle plan is approved and not yet started. Open it first:**
+[`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cycle.md) — the first upstream pull,
+the security hardening, the parity sweep, and `v0.9.0-hqm-v0.2.0`. Its rulings are in
+[`decisions/2026-07-31-stay-on-the-v0.9.0-line.md`](decisions/2026-07-31-stay-on-the-v0.9.0-line.md);
+the pending decisions are at the bottom of the plan. **Phase 0 is B1, and it gates everything
+else.**
+
+Three registers carry the rest, and they are where a session starts:
 
 - [`bugs.md`](bugs.md) — open defects, severity, repro, what is `awaiting(Rahul)`
 - [`backlog.md`](backlog.md) — proposed work, blocked work, open questions
+- [`plans/`](plans/) — what is queued to move next
 
-Do not re-derive either from the git log. If work is not in one of those two files or in
+Do not re-derive any of it from the git log. If work is not in one of those files or in
 [`decisions/`](decisions/), it is not tracked.
 
 ## Current focus
@@ -121,6 +128,12 @@ suite as evidence that a visual change works.
 ## Active set
 
 - [`bugs.md`](bugs.md) · [`backlog.md`](backlog.md) — the two working registers
+- [`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cycle.md) — **the approved cycle**:
+  first upstream pull, hardening, parity sweep, `v0.9.0-hqm-v0.2.0`, and every pending decision
+- [`decisions/2026-07-31-stay-on-the-v0.9.0-line.md`](decisions/2026-07-31-stay-on-the-v0.9.0-line.md)
+  — why we sit on v0.9.0 by choice, why the daemon waits, the version rule
+- [`notes/2026-07-31-upstream-issue-overlap.md`](notes/2026-07-31-upstream-issue-overlap.md) —
+  DeusData's open issues that touch our work, and what is worth offering back
 - [`decisions/2026-07-31-vanilla-sync.md`](decisions/2026-07-31-vanilla-sync.md) — how
   `vanilla-upstream` follows upstream without lighting the repo up
 - [`decisions/2026-07-30-view-parity.md`](decisions/2026-07-30-view-parity.md) — one shell, two
