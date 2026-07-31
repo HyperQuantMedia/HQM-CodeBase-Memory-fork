@@ -17,6 +17,34 @@ interface CollapsibleSectionProps {
  *
  * Collapsed state unmounts the body rather than hiding it, so a collapsed panel
  * costs nothing to keep around and its scroll position resets cleanly. */
+
+/* C7, round 3 (owner, 2026-08-01): a collapsed section leaves the column
+ * entirely and docks as a vertical tab on a slim rail at the left edge — each
+ * section individually. A full-width column of empty space under two collapsed
+ * strips read as wasted room; the rail gives the map that width back. */
+export function CollapsedRailTab({
+  title,
+  onOpen,
+}: {
+  title: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      onClick={onOpen}
+      aria-expanded={false}
+      data-rail-tab={title}
+      title={`Open ${title}`}
+      className="flex items-center gap-1 px-1 py-2.5 rounded text-[10px] font-medium uppercase tracking-widest text-ink-soft hover:text-foreground/80 hover:bg-foreground/[0.05] transition-colors"
+      style={{ writingMode: "vertical-rl" }}
+    >
+      <span className="text-[9px] text-ink-dim rotate-90" aria-hidden="true">
+        ▾
+      </span>
+      {title}
+    </button>
+  );
+}
 export function CollapsibleSection({
   title,
   open,

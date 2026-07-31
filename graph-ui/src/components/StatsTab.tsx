@@ -1,5 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { LayoutDashboard } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { GraphTabIcon } from "./TabIcons";
 import { useProjects } from "../hooks/useProjects";
 import { colorForLabel } from "../lib/colors";
 import { useUiMessages } from "../lib/i18n";
@@ -577,9 +579,12 @@ export function StatsTab({ onSelectProject, onSelectSizeMap }: StatsTabProps) {
                     {/* AdrButton unmounted per the cycle plan's E ruling: manage_adr is
                         cross-session agent memory wearing the name ADR. One line to
                         restore if a per-project notes field is ever wanted. */}
-                    <button onClick={() => onSelectProject(p.project.name)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">{t.projects.viewGraph}</button>
+                    {/* Round 3 (owner): glyph BEFORE the word here — this is where
+                        the icons' meaning gets taught, so the tabs' toolbar
+                        cross-links can stay glyph-only. */}
+                    <button onClick={() => onSelectProject(p.project.name)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all"><GraphTabIcon />{t.projects.viewGraph}</button>
                     {onSelectSizeMap && (
-                      <button onClick={() => onSelectSizeMap(p.project.name)} className="px-3 py-1.5 rounded-lg bg-info/15 hover:bg-info/25 text-info text-[12px] font-medium transition-all">{t.projects.viewSizeMap}</button>
+                      <button onClick={() => onSelectSizeMap(p.project.name)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-info/15 hover:bg-info/25 text-info text-[12px] font-medium transition-all"><LayoutDashboard size={14} strokeWidth={1.6} aria-hidden="true" />{t.projects.viewSizeMap}</button>
                     )}
                     <button onClick={() => deleteProject(p.project.name)} className="px-2 py-1.5 rounded-lg hover:bg-destructive/10 text-ink-faint hover:text-destructive text-[12px] transition-all" title={t.projects.deleteTitle}>✕</button>
                   </div>

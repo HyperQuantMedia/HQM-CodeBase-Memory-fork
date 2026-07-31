@@ -132,38 +132,37 @@ describe("collapsible sidebar panels", () => {
     expect(body).not.toBeNull();
   });
 
-  it("gathers collapsed sections at the top of the column (C7), Filters collapsed too", async () => {
+  it("docks both collapsed sections on the left rail (C7 round 3)", async () => {
     mockFetch();
-    render(<GraphTab project="demo" />);
+    const { container } = render(<GraphTab project="demo" />);
     await screen.findByText("Filters");
 
     fireEvent.click(screen.getByRole("button", { name: /Folders/ }));
     fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
-    const folders = screen
-      .getByRole("button", { name: /Folders/ })
-      .closest("[data-collapsible]")!;
-    /* C7 (owner, v0.2.0 wanted-list): collapsed strips gather at the top-left
-     * corner. This supersedes the 2026-07-30 mt-auto ruling this test used to
-     * defend — both were the owner's calls; the newer one wins. If this
-     * assertion is ever flipped back, check whose call it was first. */
-    expect(folders.className).not.toContain("mt-auto");
+    /* C7's ruling chain, all three the owner's calls in order: 2026-07-30
+     * anchored a collapsed Folders to the floor (mt-auto); round 1 of the
+     * v0.2.0 sweep gathered collapsed strips at the top; round 3 (2026-08-01)
+     * moved a collapsed section OFF the column onto a slim rail — each
+     * individually, and the wide column exists only while something is open.
+     * If this is ever flipped again, check whose call it was first. */
+    expect(container.querySelector('[data-rail-tab="Folders"]')).toBeTruthy();
+    expect(container.querySelector('[data-rail-tab="Filters"]')).toBeTruthy();
+    expect(container.querySelector("[data-collapsible]")).toBeNull();
   });
 
-  it("keeps a collapsed Folders under Filters, not on the bottom edge (C7)", async () => {
+  it("reopens a section from its rail tab (C7 round 3)", async () => {
     mockFetch();
-    render(<GraphTab project="demo" />);
+    const { container } = render(<GraphTab project="demo" />);
     const header = await screen.findByRole("button", { name: /Folders/ });
-    /* `section` is the CollapsibleSection wrapper that carries the layout class. */
-    const section = header.closest("[data-collapsible]") ?? header.parentElement!;
-    expect(section.className).not.toContain("mt-auto");
-
     fireEvent.click(header);
-    const collapsed =
-      screen.getByRole("button", { name: /Folders/ }).closest("[data-collapsible]") ??
-      screen.getByRole("button", { name: /Folders/ }).parentElement!;
-    /* No mt-auto: the flex column's free space stays BELOW the strip, so the
-     * collapsed header sits in the corner with its neighbour (C7). */
-    expect(collapsed.className).not.toContain("mt-auto");
+    /* Collapsed = unmounted from the column, docked on the rail. */
+    expect(container.querySelector('[data-collapsible][data-collapsible="open"]')).toBeTruthy();
+    const tab = container.querySelector('[data-rail-tab="Folders"]')!;
+    expect(tab).toBeTruthy();
+
+    fireEvent.click(tab);
+    expect(container.querySelector('[data-rail-tab="Folders"]')).toBeNull();
+    expect(screen.getByRole("button", { name: /Folders/ })).toBeTruthy();
   });
 });
 

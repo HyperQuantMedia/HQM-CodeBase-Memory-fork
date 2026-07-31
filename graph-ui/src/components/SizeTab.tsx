@@ -24,7 +24,7 @@ import { GraphScene, computeCameraTarget, type CameraTarget } from "./GraphScene
 import { VIEW_MODE_ICON } from "./ViewModeIcons";
 import { SettingsMenu } from "./SettingsMenu";
 import { Breadcrumb } from "./Breadcrumb";
-import { CollapsibleSection } from "./CollapsibleSection";
+import { CollapsedRailTab, CollapsibleSection } from "./CollapsibleSection";
 import { ResizeHandle } from "./ResizeHandle";
 import { SizeTree } from "./SizeTree";
 import { GraphTabIcon } from "./TabIcons";
@@ -533,11 +533,36 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
 
   return (
     <div className="h-full flex">
-      {/* Left panel — resizable */}
+      {/* C7 round 3: collapsed sections dock on the rail, same as the graph tab. */}
+      {(!filtersOpen || !foldersOpen) && (
+        <div className="w-8 border-r border-border/30 bg-sidebar/90 flex flex-col items-center gap-1 py-2 shrink-0">
+          {!filtersOpen && (
+            <CollapsedRailTab
+              title="Filters"
+              onOpen={() => {
+                saveFlag("cbm-filters-open", true);
+                setFiltersOpen(true);
+              }}
+            />
+          )}
+          {!foldersOpen && (
+            <CollapsedRailTab
+              title="Folders"
+              onOpen={() => {
+                saveFlag("cbm-folders-open", true);
+                setFoldersOpen(true);
+              }}
+            />
+          )}
+        </div>
+      )}
+      {/* Left panel — resizable, present only while a section is open */}
+      {(filtersOpen || foldersOpen) && (
       <div
         className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
         style={{ width: leftWidth }}
       >
+        {filtersOpen && (
         <CollapsibleSection
           title="Filters"
           open={filtersOpen}
@@ -649,7 +674,11 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
             </button>
           </div>
         </CollapsibleSection>
+        )}
 
+        {/* C7 ruling chain lives in GraphTab.tsx — round 3 moved collapsed
+            sections off the column onto the rail. */}
+        {foldersOpen && (
         <CollapsibleSection
           title="Folders"
           open={foldersOpen}
@@ -659,12 +688,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
               return !v;
             })
           }
-          /* C7 — collapsed sections gather at the top of the column, same as the
-             graph tab. See GraphTab.tsx for the ruling chain (this supersedes the
-             2026-07-30 mt-auto ruling). */
-          className={
-            foldersOpen ? "flex-1 min-h-0" : "shrink-0 border-t border-border/40"
-          }
+          className="flex-1 min-h-0"
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
               {formatBytes(node.bytes)}
@@ -680,7 +704,10 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
             project={project}
           />
         </CollapsibleSection>
+        )}
       </div>
+      )}
+      {(filtersOpen || foldersOpen) && (
       <ResizeHandle
         side="left"
         onResize={(d) => {
@@ -691,6 +718,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           });
         }}
       />
+      )}
 
       {/* Map area */}
       <div className="flex-1 min-w-0 flex flex-col">
@@ -893,13 +921,10 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 aria-label="Open the relationship graph"
                 title="Same corpus, measured in relationships"
               >
-                {/* B14: the bare glyph read as a share icon — the owner hunted for
-                    this exact button and could not find it. The word carries the
-                    destination; the glyph stays as the tab's signature. */}
-                <span className="flex items-center gap-1.5">
-                  <GraphTabIcon />
-                  <span className="text-[11px]">Graph</span>
-                </span>
+                {/* B14, round 3 (owner): glyph only here — the words moved to the
+                    Projects tab's buttons, where icon-before-word teaches the
+                    glyph's meaning once, so the toolbar can stay compact. */}
+                <GraphTabIcon />
               </Button>
             )}
           </div>

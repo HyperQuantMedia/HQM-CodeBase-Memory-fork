@@ -43,7 +43,7 @@ import { NodeDetailPanel } from "./NodeDetailPanel";
 import { MissedCallout } from "./MissedCallout";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { CollapsibleSection } from "./CollapsibleSection";
+import { CollapsedRailTab, CollapsibleSection } from "./CollapsibleSection";
 import { Breadcrumb } from "./Breadcrumb";
 import { HelpModal } from "./HelpModal";
 import type { GraphNode, GraphData, RepoInfo } from "../lib/types";
@@ -610,13 +610,39 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
 
   return (
     <div className="h-full flex">
-      {/* Left sidebar — resizable */}
+      {/* C7 round 3: collapsed sections dock as vertical tabs on this rail —
+          individually — and the wide column exists only while something is open. */}
+      {(!filtersOpen || !foldersOpen) && (
+        <div className="w-8 border-r border-border/30 bg-sidebar/90 flex flex-col items-center gap-1 py-2 shrink-0">
+          {!filtersOpen && (
+            <CollapsedRailTab
+              title="Filters"
+              onOpen={() => {
+                saveFlag("cbm-filters-open", true);
+                setFiltersOpen(true);
+              }}
+            />
+          )}
+          {!foldersOpen && (
+            <CollapsedRailTab
+              title="Folders"
+              onOpen={() => {
+                saveFlag("cbm-folders-open", true);
+                setFoldersOpen(true);
+              }}
+            />
+          )}
+        </div>
+      )}
+      {/* Left sidebar — resizable, present only while a section is open */}
+      {(filtersOpen || foldersOpen) && (
       <div
         className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
         style={{ width: leftWidth }}
       >
         {/* Filters at the top, folders below — either can fold away to give the
             other the whole column. */}
+        {filtersOpen && (
         <CollapsibleSection
           title="Filters"
           open={filtersOpen}
@@ -627,15 +653,9 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
             })
           }
           /* Filters is capped at 55% so it cannot crowd out the folder tree — but
-              only while the tree is actually open. With Folders collapsed the cap
-              left a dead band of empty sidebar between the two headers, so the
-              open section takes the whole column instead. */
+              only while the tree is actually open. */
           className={`border-b border-border/40 ${
-            !filtersOpen
-              ? "shrink-0"
-              : foldersOpen
-                ? "max-h-[55%] shrink-0"
-                : "flex-1 min-h-0"
+            foldersOpen ? "max-h-[55%] shrink-0" : "flex-1 min-h-0"
           }`}
         >
           <FilterPanel
@@ -668,7 +688,13 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
             onToggleMissedView={() => setShowMissedSkeleton((v) => !v)}
           />
         </CollapsibleSection>
+        )}
 
+        {/* C7 ruling chain: round 1 superseded the 2026-07-30 mt-auto ruling
+            (collapsed strips gathered at the top); round 3 (owner, 2026-08-01)
+            moved a collapsed section OFF the column onto the rail entirely.
+            All three layouts were the owner's calls, in that order. */}
+        {foldersOpen && (
         <CollapsibleSection
           title="Folders"
           open={foldersOpen}
@@ -678,16 +704,7 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
               return !v;
             })
           }
-          /* C7 (owner, the v0.2.0 wanted-list): collapsed sections gather at the
-              top of the column — "collapse to the left corner, not top and
-              bottom". This SUPERSEDES the 2026-07-30 mt-auto ruling that anchored
-              a collapsed Folders to the floor; both were the owner's calls, this
-              one is newer, and the tests now assert this one. The ruling chain is
-              recorded so nobody re-derives either layout from how the empty
-              space looks. */
-          className={
-            foldersOpen ? "flex-1 min-h-0" : "shrink-0 border-t border-border/40"
-          }
+          className="flex-1 min-h-0"
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
               {filteredData.nodes.length.toLocaleString()}
@@ -701,7 +718,10 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
             project={project}
           />
         </CollapsibleSection>
+        )}
       </div>
+      )}
+      {(filtersOpen || foldersOpen) && (
       <ResizeHandle
         side="left"
         onResize={(d) => {
@@ -712,6 +732,7 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
           });
         }}
       />
+      )}
 
       {/* Graph area */}
       <div className="flex-1 relative overflow-hidden">
@@ -844,13 +865,9 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
                   aria-label="Open the size map"
                   title="Same corpus, measured in bytes"
                 >
-                  {/* B14 (owner, 2026-08-01): the bare glyph failed discovery — the
-                      word carries the destination, the glyph stays as the tab's
-                      signature. Mirrored on the size tab's Graph button. */}
-                  <span className="flex items-center gap-1.5">
-                    <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
-                    <span className="text-[11px]">Size map</span>
-                  </span>
+                  {/* B14, round 3 (owner): glyph only — the Projects tab's buttons
+                      carry icon-before-word and teach the glyph's meaning. */}
+                  <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
                 </Button>
               )}
               <Button
