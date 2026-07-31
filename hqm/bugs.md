@@ -30,7 +30,21 @@ still the gate ([`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cyc
 
 ### B1 — Round 5–8 UI work is unverified by eyes
 
-**Severity:** blocking the cycle · **Status:** awaiting(Rahul)
+**Severity:** blocking the cycle · **Status:** **round 1 done 2026-08-01** — partial pass, three
+new defects, density verdict still open
+
+Owner's first pass on the served build (`assets/index-BcsUzG7C.js`):
+
+- **Approved:** header tab icons (hand-drawn graph glyph *as a tab icon*); graph sidebar
+  ("mostly" — no specific defect named); Diagnostics chips + line filter.
+- **Right panel dock:** correct.
+- **New defects:** **B12** (sort says count, means bytes; file-count sort missing), **B13**
+  (treemap hides Settings/toggles), **B14** (cross-link glyph reads as share — owner could not
+  find the button while looking for it).
+- **Density:** no verdict on 0.70 yet. Owner asked for the per-repo/live measurement — the
+  footer `measure` link IS that (worker probe over the on-screen corpus); phrasing reads as a
+  lean toward the probe running itself on view change — logged as owner input on the parked
+  Phase 4b question.
 
 Everything from this session is green in the suite and unlooked-at on screen. Green suites
 missed all sixteen defects of rounds 1–4 and all four of round 5. The surfaces to look at:
@@ -269,6 +283,38 @@ this panel.
 
 **Repro:** switch to the light theme and compare a relationship chip's contrast against a node-type
 chip beside it.
+
+### B12 — Size panel's sort button says "count" but sorts by bytes; file-count sort missing
+
+**Severity:** medium — a control that lies · **Status:** open, owner-found 2026-08-01 (B1 round 1)
+
+`lib/sortOrder.ts` knows two keys, `name | count`, and `SizeTree.tsx:74` feeds **bytes** into the
+count slot — so the size panel's button is labelled count and actually sorts by size. The owner's
+ruling: **sort by size and sort by file-count are two different questions and get two controls**
+(plus name). Fix shape: a third key (or a per-list measure label) in `sortOrder.ts`, `SizeTree`
+passes bytes AND fileCount separately, `SortControl`'s accessible label names the real measure.
+Belongs to Phase 3 (the sweep already touches this panel).
+
+### B13 — Treemap view hides Settings and the toggle rail
+
+**Severity:** medium · **Status:** open, owner-found 2026-08-01 (B1 round 1) — deliberate gate,
+overruled
+
+`SizeTab.tsx` gates the auto-rotate toggle AND `SettingsMenu` behind `view !== "treemap"` (the
+comment reasons fov/bloom have nothing to act on in a DOM view). Owner ruling: **cycling views
+must not make controls appear and disappear** — keep the rail stable; disable or empty what does
+not apply. Phase 3.
+
+### B14 — The graph cross-link glyph reads as a share icon (third attempt still misread)
+
+**Severity:** low, but it defeated its own purpose · **Status:** open, owner-found 2026-08-01
+(B1 round 1)
+
+The size tab's cross-link button ("Open the relationship graph") is the hand-drawn graph glyph —
+and the owner, hunting for exactly this button, could not find it because it reads as a platform
+share affordance. The 2026-07-30 ruling replaced `Share2` for this exact reason; the replacement
+inherited the problem. Fix shape: draw it again (fourth attempt) or pair the glyph with a visible
+label; verify by the owner finding it unprompted.
 
 ### B11 — Executable-stack fix applied but unproven on ELF output
 
