@@ -2347,6 +2347,11 @@ int cbm_ensure_path(const char *bin_dir, const char *rc_file, bool dry_run) {
 
 /* ── Tar.gz extraction ────────────────────────────────────────── */
 
+#if CBM_ENABLE_SELF_UPDATE
+/* HQM's own releases, never DeusData's: a fork that fetches its replacement from
+ * upstream replaces itself WITH upstream. CBM_DOWNLOAD_URL overrides at runtime. */
+#define CBM_RELEASE_DOWNLOAD_BASE "https://github.com/HyperQuantMedia/HQM-CodeBase-Memory-fork/releases/latest/download"
+#define CBM_RELEASE_LATEST_URL "https://github.com/HyperQuantMedia/HQM-CodeBase-Memory-fork/releases/latest"
 /* Decompress gzip data into a malloc'd buffer. Returns NULL on failure.
  * *out_total receives the decompressed size. Caller must free the result. */
 static unsigned char *gzip_decompress(const unsigned char *data, int data_len, size_t *out_total) {
@@ -2614,6 +2619,7 @@ unsigned char *cbm_extract_binary_from_zip(const unsigned char *data, int data_l
 
     return NULL;
 }
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ── Index management ─────────────────────────────────────────── */
 
@@ -3007,6 +3013,7 @@ int cbm_cli_sha256_file(const char *path, char *out, size_t out_size) {
     return 0;
 }
 
+#if CBM_ENABLE_SELF_UPDATE
 /* ── Download helper (shell-free curl via exec) ───────────────── */
 
 static int cbm_download_to_file(const char *url, const char *dest) {
@@ -3018,6 +3025,7 @@ static int cbm_download_to_file_quiet(const char *url, const char *dest) {
     const char *argv[] = {"curl", "-fsSL", "-o", dest, url, NULL};
     return cbm_exec_no_shell(argv);
 }
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ── macOS ad-hoc signing ─────────────────────────────────────── */
 
@@ -3066,6 +3074,7 @@ static int cbm_kill_other_instances(void) {
 #endif
 }
 
+#if CBM_ENABLE_SELF_UPDATE
 /* Download checksums.txt and verify the archive integrity.
  * Returns: 0 = verified OK, 1 = mismatch (FAIL), -1 = could not verify (warning). */
 static int verify_download_checksum(const char *archive_path, const char *archive_name) {
@@ -3080,8 +3089,7 @@ static int verify_download_checksum(const char *archive_path, const char *archiv
         snprintf(checksum_url, sizeof(checksum_url), "%s/checksums.txt", dl_base);
     } else {
         snprintf(checksum_url, sizeof(checksum_url), "%s",
-                 "https://github.com/DeusData/codebase-memory-mcp/releases/latest/download/"
-                 "checksums.txt");
+                 CBM_RELEASE_DOWNLOAD_BASE "/checksums.txt");
     }
     int rc = cbm_download_to_file_quiet(checksum_url, checksum_file);
     if (rc != 0) {
@@ -3130,7 +3138,10 @@ static int verify_download_checksum(const char *archive_path, const char *archiv
     printf("Checksum verified: %s\n", actual);
     return 0;
 }
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
+#if CBM_ENABLE_SELF_UPDATE
+/* Only the download URL needs these, so they travel with it. */
 /* ── Detect OS/arch for download URL ──────────────────────────── */
 
 static const char *detect_os(void) {
@@ -3150,6 +3161,7 @@ static const char *detect_arch(void) {
     return "amd64";
 #endif
 }
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ── Agent config install/refresh (shared by install + update) ── */
 
@@ -4153,6 +4165,7 @@ typedef struct {
     const char *ext;
     const char *bin_dest;
 } extract_install_args_t;
+#if CBM_ENABLE_SELF_UPDATE
 static int extract_and_install_binary(extract_install_args_t args) {
     const char *tmp_archive = args.tmp_archive;
     const char *ext = args.ext;
@@ -4207,7 +4220,7 @@ static void build_update_url(char *url, int url_sz, const char *os, const char *
     const char *base_url =
         cbm_safe_getenv("CBM_DOWNLOAD_URL", base_url_buf, sizeof(base_url_buf), NULL);
     if (!base_url || !base_url[0]) {
-        base_url = "https://github.com/DeusData/codebase-memory-mcp/releases/latest/download";
+        base_url = CBM_RELEASE_DOWNLOAD_BASE;
     }
     /* Linux ships a fully-static "-portable" build; the standard linux binary
      * dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
@@ -4323,7 +4336,7 @@ static bool prefix_icase(const char *s, const char *prefix) {
  * Returns heap-allocated tag (e.g. "v0.5.7") or NULL on failure. */
 static char *fetch_latest_tag(void) {
     FILE *fp = cbm_popen(
-        "curl -sfI https://github.com/DeusData/codebase-memory-mcp/releases/latest 2>/dev/null",
+        "curl -sfI " CBM_RELEASE_LATEST_URL " 2>/dev/null",
         "r");
     if (!fp) {
         return NULL;
@@ -4491,6 +4504,30 @@ int cbm_cmd_update(int argc, char **argv) {
     (void)variant;
     return 0;
 }
+#else /* !CBM_ENABLE_SELF_UPDATE */
+
+/* Self-update is compiled out — see the note on CBM_ENABLE_SELF_UPDATE in cli.h.
+ * The command still exists so `update` explains itself instead of reporting an
+ * unknown subcommand, which would read as a broken build rather than a decision. */
+int cbm_cmd_update(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    (void)fprintf(stderr,
+                  "update: not built into this binary.\n"
+                  "\n"
+                  "Self-update downloads an archive, unpacks an executable and replaces\n"
+                  "the running binary. This build omits that machinery entirely rather\n"
+                  "than disabling it at runtime.\n"
+                  "\n"
+                  "Update the way you installed:\n"
+                  "  install.sh   re-run it (add --ui for the UI build)\n"
+                  "  npm          npm install -g codebase-memory-mcp@latest\n"
+                  "  PyPI         pip install --upgrade codebase-memory-mcp\n"
+                  "  manual       download the archive, replace the binary yourself\n");
+    return 1;
+}
+
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ── CLI tool arguments (flags / --args-file / --help) ────────────── */
 

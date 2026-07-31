@@ -11,6 +11,33 @@
 
 #include <stdbool.h>
 
+/* ── Self-update: compiled OUT by default ─────────────────────────
+ *
+ * `update` downloads a release archive, decompresses it, picks an executable out
+ * of it and marks it executable, then replaces the running binary. That is the
+ * canonical dropper composite, and on a fork it is also a self-destruct: the
+ * default download URL pointed at DeusData's releases, so `update` replaced
+ * Cartograph with vanilla upstream — losing the light theme, the size map, the
+ * spacing probe, ingest_overlay and the 16-tool set — and offered to delete the
+ * user's indexes on the way.
+ *
+ * Absent, not merely unreachable: scripts/ci/check-binary-composition.sh scans the
+ * shipped artifact for `releases/latest` and the extraction symbols, so an
+ * `if (0)` would still fail the gate. The whole chain is behind this flag —
+ * cbm_cmd_update, download_verify_install, verify_download_checksum,
+ * extract_and_install_binary, gzip_decompress and both extractors.
+ *
+ * Build with -DCBM_ENABLE_SELF_UPDATE=1 to compile it back in. When enabled it
+ * targets HQM's own releases (see CBM_RELEASE_* in cli.c), never DeusData's; a
+ * fork must never fetch its own replacement from upstream. CBM_DOWNLOAD_URL still
+ * overrides at runtime, which is how the installer scripts and tests point it
+ * somewhere local.
+ *
+ * Users update through install.sh / npm / PyPI, which is how they installed. */
+#ifndef CBM_ENABLE_SELF_UPDATE
+#define CBM_ENABLE_SELF_UPDATE 0
+#endif
+
 /* ── Version ──────────────────────────────────────────────────── */
 
 /* Set the version string (called from main). */
@@ -255,7 +282,12 @@ int cbm_ensure_path(const char *bin_dir, const char *rc_file, bool dry_run);
 /* Get the Codex CLI instructions content. */
 const char *cbm_get_codex_instructions(void);
 
-/* ── Tar.gz extraction ────────────────────────────────────────── */
+/* ── Archive extraction — self-update only ────────────────────────
+ *
+ * Gated with the update command that is their only caller. "Decompress an archive
+ * and pick an executable out of it" is half the dropper composite; the other half
+ * is the download beside it. Tests that exercise them are gated the same way. */
+#if CBM_ENABLE_SELF_UPDATE
 
 /* Extract a binary named "codebase-memory-mcp*" from a tar.gz buffer.
  * Returns malloc'd binary content and sets *out_len.
@@ -266,6 +298,8 @@ unsigned char *cbm_extract_binary_from_targz(const unsigned char *data, int data
  * Returns malloc'd binary content and sets *out_len.
  * Returns NULL on error. Caller must free. */
 unsigned char *cbm_extract_binary_from_zip(const unsigned char *data, int data_len, int *out_len);
+
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ── Index management ─────────────────────────────────────────── */
 

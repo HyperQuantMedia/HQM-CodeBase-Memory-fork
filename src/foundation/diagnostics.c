@@ -14,6 +14,19 @@
 #include "foundation/platform.h"
 
 #include <mimalloc.h>
+#ifdef _WIN32
+#include "foundation/win_utf8.h" /* cbm_path_to_wide — _wopen on a UTF-8 %TEMP% */
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+#define diag_fdopen _fdopen
+#define diag_close _close
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#define diag_fdopen fdopen
+#define diag_close close
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,6 +108,63 @@ static int count_open_fds(void) {
 #define DIAG_INTERVAL_S 5
 #define DIAG_PATH_EXTRA 24 /* ".tmp" + safety margin */
 
+/* Open a diagnostics file that this process definitely created.
+ *
+ * Both diagnostics paths are predictable — "<tmp>/cbm-diagnostics-<pid>.json" and
+ * its .ndjson companion — and both were opened with a plain fopen. In a shared
+ * temp directory another local user can pre-plant a symlink at either name, and
+ * the write then lands wherever the link points, as this process's user. The pid
+ * makes the name unique per run, not unguessable.
+ *
+ * Exclusive creation IS the guarantee, so the predictable name is allowed to stay:
+ * unlink first (dropping a stale file from an earlier run with this pid, or the
+ * planted symlink itself — never its target), then create with O_EXCL so the open
+ * fails closed if anything reappears at the path in that window. O_NOFOLLOW is
+ * belt-and-braces on POSIX for the same window.
+ *
+ * Mode 0600: a heap snapshot describes this process's memory layout, so it is
+ * owner-only. `append` keeps the NDJSON trajectory's accumulating semantics — it
+ * unlinks nothing on subsequent samples, because the file it appends to is the one
+ * it created on the first.
+ *
+ * Best-effort by contract: every caller treats NULL as "skip this sample". */
+static FILE *diag_open_private(const char *path, bool append) {
+    if (append) {
+        FILE *existing = fopen(path, "a");
+        if (existing) {
+            return existing;
+        }
+        /* First sample, or the file was rotated away — fall through and create it
+         * exclusively, which is the only open that needs the guarantee. */
+    }
+    (void)cbm_unlink(path);
+#ifdef _WIN32
+    /* _wopen, not _open: the ANSI CRT reads the UTF-8 bytes of a non-ASCII %TEMP%
+     * in the local codepage and fails to find the directory. */
+    wchar_t *wide = cbm_path_to_wide(path);
+    if (!wide) {
+        return NULL;
+    }
+    int descriptor = _wopen(wide, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY | _O_NOINHERIT,
+                            _S_IREAD | _S_IWRITE);
+    free(wide);
+#else
+    int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    int descriptor = open(path, flags, 0600);
+#endif
+    if (descriptor < 0) {
+        return NULL;
+    }
+    FILE *sink = diag_fdopen(descriptor, append ? "ab" : "wb");
+    if (!sink) {
+        (void)diag_close(descriptor);
+    }
+    return sink;
+}
+
 /* Append one compact JSON line to the persistent NDJSON trajectory, rotating to
  * <path>.1 once it passes the cap. Best-effort: a failed append never disrupts
  * the server. The trajectory (a monotonic rss/committed climb over hours) is
@@ -110,7 +180,7 @@ static void append_trajectory(long uptime, size_t rss, size_t peak_rss, size_t c
         (void)rename(g_diag_ndjson_path, rot); /* keep one previous generation */
         g_diag_ndjson_size = 0;
     }
-    FILE *f = fopen(g_diag_ndjson_path, "a");
+    FILE *f = diag_open_private(g_diag_ndjson_path, true);
     if (!f) {
         return;
     }
@@ -156,7 +226,7 @@ static void write_diagnostics(void) {
     char tmp_path[sizeof(g_diag_path) + DIAG_PATH_EXTRA];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", g_diag_path);
 
-    FILE *f = fopen(tmp_path, "w");
+    FILE *f = diag_open_private(tmp_path, false);
     if (!f) {
         return;
     }

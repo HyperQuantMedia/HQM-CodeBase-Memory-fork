@@ -43,8 +43,12 @@ GCC_ONLY_FLAGS := -Wno-format-truncation -Wno-unused-result \
                   -Wno-stringop-truncation -Wno-alloc-size-larger-than
 endif
 
+# -Wdate-time: with -Werror, any use of __DATE__/__TIME__/__TIMESTAMP__ becomes a
+# build failure. Without it no two builds of identical source can share a hash, so
+# "reproducible build" is unverifiable — mimalloc baked the wall clock into every
+# binary until vendored/mimalloc/src/options.c was fixed alongside this.
 CFLAGS_COMMON = -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall -Wextra -Werror \
-                -Wno-unused-parameter -Wno-sign-compare \
+                -Wno-unused-parameter -Wno-sign-compare -Wdate-time \
                 $(GCC_ONLY_FLAGS) \
                 -Isrc -Ivendored -Ivendored/sqlite3 \
                 -Ivendored/mimalloc/include \
@@ -79,7 +83,25 @@ CXXFLAGS_TSAN = $(CXXFLAGS_COMMON) -g -O1 \
 IS_MINGW := $(shell echo | $(CC) -dM -E - 2>/dev/null | grep -q 'define _WIN32 ' && echo yes || echo no)
 WIN32_LIBS :=
 ifeq ($(IS_MINGW),yes)
-WIN32_LIBS := -lws2_32 -lpsapi -lshell32 -Wl,--allow-multiple-definition -Wl,--stack,8388608 -static
+# --no-insert-timestamp: the PE header otherwise carries the link wall clock, which
+# is the same reproducibility problem as __DATE__ and equally invisible.
+WIN32_LIBS := -lws2_32 -lpsapi -lshell32 -Wl,--allow-multiple-definition -Wl,--stack,8388608 -Wl,--no-insert-timestamp -static
+endif
+
+# W^X: demand a non-executable stack on ELF. Belt to the braces of the
+# .note.GNU-stack annotation in vendored/nomic/code_vectors_blob.S — the note fixes
+# the CAUSE (an unannotated object makes GNU ld assume the worst for the WHOLE link,
+# which is why every Linux binary this fork shipped had GNU_STACK RWE), this flag
+# fixes the OUTCOME, and scripts/ci/check-binary-composition.sh proves it on the
+# shipped artifact rather than trusting either.
+#
+# ELF-only, and gated rather than made "common": Apple's ld rejects -z noexecstack
+# outright, and it is meaningless for PE. HQM-dev had no platform detection beyond
+# IS_MINGW, so the probe arrives with the flag.
+IS_LINUX := $(shell uname -s 2>/dev/null | grep -q Linux && echo yes || echo no)
+ELF_HARDENING_FLAGS :=
+ifeq ($(IS_LINUX),yes)
+ELF_HARDENING_FLAGS := -Wl,-z,noexecstack
 endif
 
 # STATIC=1 produces a fully static binary (for Alpine/musl portable builds)
@@ -87,9 +109,9 @@ ifeq ($(STATIC),1)
 STATIC_FLAGS := -static
 endif
 
-LDFLAGS = -lm -lstdc++ -lpthread -lz $(WIN32_LIBS) $(STATIC_FLAGS)
-LDFLAGS_TEST = -lm -lstdc++ -lpthread -lz $(SANITIZE) $(WIN32_LIBS)
-LDFLAGS_TSAN = -lm -lstdc++ -lpthread -lz -fsanitize=thread $(WIN32_LIBS)
+LDFLAGS = -lm -lstdc++ -lpthread -lz $(WIN32_LIBS) $(STATIC_FLAGS) $(ELF_HARDENING_FLAGS)
+LDFLAGS_TEST = -lm -lstdc++ -lpthread -lz $(SANITIZE) $(WIN32_LIBS) $(ELF_HARDENING_FLAGS)
+LDFLAGS_TSAN = -lm -lstdc++ -lpthread -lz -fsanitize=thread $(WIN32_LIBS) $(ELF_HARDENING_FLAGS)
 
 # ── Source files ─────────────────────────────────────────────────
 
@@ -284,8 +306,17 @@ MIMALLOC_CFLAGS_TEST = -std=c11 -g -O1 -w \
 # SQLITE_ENABLE_FTS5: enables the FTS5 full-text search extension used by the
 # BM25 search path in search_graph (see nodes_fts virtual table in store.c).
 SQLITE3_SRC = vendored/sqlite3/sqlite3.c
-SQLITE3_CFLAGS = -std=c11 -O2 -w -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5
-SQLITE3_CFLAGS_TEST = -std=c11 -g -O1 -w -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5
+# SQLITE_OMIT_LOAD_EXTENSION: nothing in src/ or internal/ calls
+# sqlite3_load_extension or sqlite3_enable_load_extension. Loading is off by default
+# at runtime, but "disabled by default" is a setting while "not compiled in" is a
+# property — this removes the API surface, and part of the dlopen/dlsym import
+# surface with it. The composition gate asserts the symbols are absent from every
+# release artifact, so the claim is checked rather than trusted.
+SQLITE3_OMIT_FLAGS = -DSQLITE_OMIT_LOAD_EXTENSION
+SQLITE3_CFLAGS = -std=c11 -O2 -w -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 \
+                 $(SQLITE3_OMIT_FLAGS)
+SQLITE3_CFLAGS_TEST = -std=c11 -g -O1 -w -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 \
+                      $(SQLITE3_OMIT_FLAGS)
 
 # TRE regex (vendored, Windows only — POSIX uses system <regex.h>)
 TRE_SRC = vendored/tre/tre_all.c

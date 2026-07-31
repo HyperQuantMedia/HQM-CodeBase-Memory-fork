@@ -5,6 +5,86 @@
 
 Updated: 2026-07-31 · Focus set by: Rahul
 
+---
+
+## ⛳ SESSION HANDOFF — 2026-07-31 evening, read this before anything else
+
+**Branch state (nothing of ours is on `origin`; only the mirror was pushed today):**
+
+| Branch | Local | On origin | State |
+|---|---|---|---|
+| `vanilla-upstream` | — | **`d698db8e`** | pushed; level with DeusData, 0 behind |
+| `Merged` | **`500ac1ce`** | `56c2feb9` | full 547-commit take, **QUARANTINED — do not greenlight** |
+| `HQM-dev` | `94498621` **+ uncommitted hardening** | `2be1a469` | green, no daemon |
+| `main` | `94498621` | `56c2feb9` | cut from HQM-dev |
+
+**Why `Merged` is quarantined:** the merged binary does not run. `list_projects`,
+`daemon start` and `--ui=true` all fail with *"CBM daemon could not start within 30000 ms"*.
+Proven inherited, not caused by us: a built worktree at `origin/vanilla-upstream` with **zero
+HQM code** fails identically. 98 C-test failures, all daemon/lock family, reproduce there
+suite-for-suite. Everything of ours is green (265 UI, httpd 60/60, ui 18/18, watcher 70/70).
+
+### Work in progress: the eight hardening items, hand-applied to `HQM-dev`
+
+This is option 1 of four the owner chose: `Merged` keeps the daemon quarantined; the security
+wave comes to our line by hand, because `HQM-dev` was the *less safe* branch (it still phoned
+home to DeusData, shipped the dropper composite, and had `GNU_STACK RWE` on every Linux build).
+
+| | Item | State |
+|---|---|---|
+| 1 | `.note.GNU-stack` + `-Wl,-z,noexecstack` (with new `IS_LINUX` probe) | done |
+| 2 | Phone-home removed — thread, notice injection, 4 struct fields, 3 call sites | done, **gate-verified** |
+| 3 | Self-update behind `CBM_ENABLE_SELF_UPDATE` (default 0) **and** repointed at HQM releases | done, **gate-verified** |
+| 4 | `-DSQLITE_OMIT_LOAD_EXTENSION` | done, **gate-verified** |
+| 5 | Private/exclusive temp paths | **HALF DONE** — `diagnostics.c` done via `diag_open_private()`; `mcp.c` search-scratch NOT started |
+| 6 | `pass_envscan.c` symlink + buffer truncation | done (needed 3 foundation files, see below) |
+| 7 | mimalloc timestamps + `-Wdate-time` + `--no-insert-timestamp` | done |
+| 8 | `scripts/ci/check-binary-composition.sh` | file in place; **`package-release.sh` wiring NOT done** |
+
+**Committed on `HQM-dev` as work-in-progress** once the gate went green, so a session switch
+loses nothing. It is *not* a finished cycle: items 5 and 8 are incomplete, so do not cut a
+release from this state.
+
+### Next actions, in order
+
+1. ~~Build + gate.~~ **DONE**: `hard4` built `EXIT=0` / 0 errors, and the gate returned
+   **`BINARY COMPOSITION OK: 12 assertions passed`** — A3 now fully absent (`releases/latest`,
+   `releases/latest/download`, `api.github.com/repos`, the GitHub `Accept` header), A4 absent +
+   `OMIT_LOAD_EXTENSION` present, A2 clean, A0-canary present so the absences mean something.
+   **A1 is ELF-only and reported `n/a` on this PE build — item 1 still needs a Linux build to
+   prove.** Rerun the gate with:
+   `bash scripts/ci/check-binary-composition.sh --variant=ui build/c/codebase-memory-mcp.exe`
+2. **Build once with `-DCBM_ENABLE_SELF_UPDATE=1`.** A flag that only compiles in the off
+   position is a deletion wearing a flag's clothes. NOT yet done.
+3. **Item 5's `mcp.c` half** — `cbm_search_<pid>.pat` and its `.files` companion. Upstream's
+   pattern: a `cbm_mkdtemp` private dir (0700 / owner-only DACL) with files created by
+   `cbm_mkstemp` (`O_CREAT|O_EXCL`, 0600), written through the returned descriptor, never
+   reopened by name. Reference: `git show Merged:src/mcp/mcp.c`, `search_scratch_open`.
+   Both primitives already exist here.
+4. **Wire item 8** into `package-release.sh` (upstream calls it at two sites) and the local
+   build path.
+5. **Both suites** (UI first — `scripts/test.sh` deletes `graph-ui/node_modules`).
+6. **A Linux build**, the only way to prove item 1 (A1 is ELF-only).
+
+### Traps that cost real time today — do not rediscover
+
+- **Gating a capability strands its private helpers**, and `-Werror` reveals them one build at
+  a time. Four rounds on item 3: `cbm_download_to_file{,_quiet}`, the tar/zip helpers,
+  `prefix_icase`, then `detect_os`/`detect_arch`. **Check what a gated span CALLS, not only what
+  calls it.**
+- **Do not read a build log mid-link.** `grep -c error:` returned 0 on a log that later failed
+  with 2. Wait for `EXIT=`.
+- **Heredocs mangle `\n`** in generated C. The `cbm_cmd_update` stub shipped literal newlines
+  inside string literals — 20 errors. Write generated C with a file, or verify the escapes.
+- **A wrong diagnosis stated confidently is worse than none.** TEMP/`cbm_tmpdir` was asserted as
+  the root cause of the 98 daemon failures; three-way testing disproved it. The comment in
+  `run-tests.sh` now records the disproof.
+- Environment: use the wrapper scripts in `scratchpad/c-suite/`. Four separate MSYS gaps
+  (`nodejs`, `git`, a real `python3.exe`, `C:/Python314` for its DLL) each fail in a way that
+  does not name its cause.
+
+---
+
 Read this first if you are opening this repository cold. Everything below is HQM-owned work
 layered on the adopted upstream; see [`README.md`](README.md) for why this directory exists.
 
@@ -186,6 +266,22 @@ suite as evidence that a visual change works.
 - **Test invocation:** `npx vitest run`. `--reporter=basic` was removed in vitest 4 and errors
   out; the default reporter is fine. Vitest 4 also swallows `console.log` under `run`, so the
   probe rigs write a report file instead.
+- **Three toolchain dependencies must be put back on PATH, and each fails differently.** An MSYS
+  `CLANG64` login shell drops the Windows PATH, so `nodejs`, `git` **and** `python3` all have to be
+  re-exported. `nodejs` fails loudly. The other two do not:
+  - `git` → **23 test failures**, cause stated once far up the log.
+  - `python3` → **`EXIT=127` at "Step 0e: Windows launcher bundle contract"**, a test that arrived
+    with the 2026-07-31 upstream merge. On this machine `python3` resolves to the WindowsApps App
+    Execution Alias rather than the real interpreter at `C:/Python314`, so a repo-local shim exists
+    at `scratchpad/c-suite/bin/python3` — deliberately not installed into MSYS `/usr/local/bin`,
+    which is outside this repo.
+
+  **Use the wrappers rather than reassembling the one-liner**: `scratchpad/c-suite/run-tests.sh
+  <log-name>` and `scratchpad/c-suite/build-with-ui.sh <version>`, both invoked as
+  `MSYSTEM=CLANG64 /c/msys64/usr/bin/bash -lc <abs-path-to-script>`. They exist because the
+  one-liner form also needs an absolute `cd` (a login shell starts in `$HOME`, so the script path
+  *and* the log redirect resolve against the wrong directory) — three separate ways to fail before
+  a single test runs.
 - **`git` must be on PATH or 23 C tests fail, and none of them say why.** An MSYS `CLANG64` login
   shell has no Windows `git`. The suite's own summary reads `5751 passed, 23 failed`; the cause
   appears once, far up the log, as `'git' is not recognized as an internal or external command`.

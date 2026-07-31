@@ -3,7 +3,72 @@
 
 # Stay on the v0.9.0 line: take one feature and the hardening, leave the daemon
 
-Decided: 2026-07-31 · Ruled by: Rahul · Status: settled
+Decided: 2026-07-31 · Ruled by: Rahul · Status: **SUPERSEDED the same day — see the banner**
+
+> ## Superseded 2026-07-31: the full upstream range was taken, daemon included
+>
+> The owner reframed the 547-commit gap as **drift, not a position**, and directed that `Merged` be
+> brought up to upstream in full. So the central holding below — *take the missed graph and the
+> hardening, leave the daemon* — no longer describes the tree. `Merged` now carries all 547 commits,
+> including `src/daemon/` (24 files, ~20k lines) and the session-coordination model that owns the
+> HTTP server's lifecycle.
+>
+> **What is superseded:** the daemon refusal, the "take exactly two things" framing, and the version
+> rule's assumption that our axis moves alone on a frozen v0.9.0 base.
+>
+> **What still stands, and why it is worth reading:**
+>
+> - **The evidence for the refusal was accurate and is now the risk register.** 13 days old at the
+>   time, reverting its own designs (`3cd1d338` pooled connection threads, reverted next day by
+>   `7808eee5`), `wip:` commits in mainline, Windows still being stabilised on our platform, and two
+>   open upstream issues — **#1351** (Windows x64 daemon leaves cache files unreadable, empty ACL)
+>   and **#1362** (peak RSS ~linear in query concurrency, 29 MB idle → 3.07 GB at 20 concurrent).
+>   Adopting it does not make those go away; it makes them ours to hit. Watch for #1351 in
+>   particular — it is Windows-specific and Windows is the platform this fork is built on.
+> - **The mandatory-adoption analysis.** `bootstrap.h` requires role classification before *any*
+>   stateful init in `main()`: no store, watcher, UI, diagnostics or index supervisor until the
+>   process knows whether it is the daemon, a worker, a thin client, or an explicitly stateless
+>   command. That was the cost estimate, and it was right — `src/daemon/host.c` now includes
+>   `ui/http_server.h` and holds the server's lifecycle through function pointers.
+> - **The missed-graph reasoning**, unchanged: both halves stand, ours says *how much* was missed,
+>   theirs says *which files*.
+> - **The hardening analysis.** All eight defects were verified present in our tree by reading our
+>   source. Several are now moot because upstream's own fixes arrived with the range — which is
+>   exactly why Phase 2 must be re-derived against the merged tree rather than executed as written.
+>
+> Do not delete this file. It records why the daemon was refused, which is the shortest path to
+> understanding what to watch now that it is in.
+>
+> ### Re-affirmed the same evening — the deferral stands, and the revisit condition is sharper
+>
+> The full take went to `Merged` and stayed there. It is **quarantined, not greenlit**, because the
+> merged binary does not run: `list_projects`, `daemon start` and `--ui=true` all fail with
+> *"CBM daemon could not start within 30000 ms"*, and a pure-`origin/vanilla-upstream` worktree with
+> zero HQM code fails identically. So the position this file argued for is the position we are in —
+> our line stays on the v0.9.0 base with the security wave hand-applied, and the daemon sits on the
+> landing strip.
+>
+> **The merge commit is kept deliberately.** Reverting it would discard ten conflict resolutions
+> (the `soak.yml` modify/delete, the kill-affordance ruling, the `save()` bug, the
+> presence-vs-parse-coverage vocabulary) and git tracks those through *ancestry* — dropping the
+> commit means re-resolving all ten on the next attempt.
+>
+> **"Revisit at upstream's next release" is too weak, and now provably so.** Upstream tagged
+> `v0.9.1-rc.1` (`560ad40d`, published 2026-07-30) and it changes nothing: it is a **prerelease**
+> (`isPrerelease: true`), it **contains all 24 daemon files**, and it is the build **#1351** reports
+> as leaving Windows cache files unreadable. Upstream's latest non-prerelease tag is still `v0.9.0`
+> from 2026-07-08 — the base we are on.
+>
+> The condition is therefore not a version number but a behaviour, and it is one command:
+>
+> ```
+> # in a worktree at the candidate ref, after scripts/build.sh
+> ./build/c/codebase-memory-mcp list_projects      # must not say "daemon could not start"
+> ```
+>
+> `scratchpad/c-suite/run-vanilla-baseline.sh` and `build-vanilla-binary.sh` exist to make that
+> check cheap on any future ref. Test the daemon *starts* before weighing anything else about a
+> release; the test suite alone would have said 98 failures and left the cause open.
 
 ## The ruling
 

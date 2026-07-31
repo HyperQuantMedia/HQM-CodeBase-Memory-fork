@@ -1222,6 +1222,10 @@ TEST(cli_install_same_file_guard_issue472) {
     PASS();
 }
 
+#if CBM_ENABLE_SELF_UPDATE
+/* These exercise the archive extractors, which are compiled out with the
+ * self-update command that is their only production caller. Gated with them so a
+ * default build has neither the capability nor tests asserting it works. */
 /* ═══════════════════════════════════════════════════════════════════
  *  Tar.gz extraction tests (port of update_test.go)
  * ═══════════════════════════════════════════════════════════════════ */
@@ -1444,6 +1448,7 @@ TEST(cli_extract_binary_from_zip_rejects_truncated_deflate_size_over_int_max) {
     free(zip);
     PASS();
 }
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Skill dry-run tests
@@ -3119,6 +3124,7 @@ SUITE(cli) {
     RUN_TEST(cli_copy_file_source_not_found);
 
     /* Tar.gz extraction (3 tests — update_test.go) */
+#if CBM_ENABLE_SELF_UPDATE
     RUN_TEST(cli_extract_binary_from_targz);
     RUN_TEST(cli_extract_binary_from_targz_not_found);
     RUN_TEST(cli_extract_binary_from_targz_invalid_data);
@@ -3127,6 +3133,7 @@ SUITE(cli) {
     RUN_TEST(cli_extract_binary_from_zip_path_traversal);
     RUN_TEST(cli_extract_binary_from_zip_invalid);
     RUN_TEST(cli_extract_binary_from_zip_rejects_truncated_deflate_size_over_int_max);
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
     /* Dry-run lifecycle (2 tests) */
     RUN_TEST(cli_install_dry_run);
