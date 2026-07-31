@@ -50,10 +50,15 @@ The dark-repo order is about what *fires unbidden*, not about never running CI a
 ## Rejected: a scheduled GitHub Action doing the sync
 
 Unattended sync would have to live in a workflow, and schedules are read from the **default
-branch**. That means committing it to `main` — which breaks the
-`HQM-dev → Merged → main` promotion order — and installing a live, firing workflow in a
-repository whose whole CI posture is that nothing fires unbidden. The convenience does not
+branch**. That means committing it to `main` — which breaks the rule that nothing is committed
+directly on `main`, since `main` is cut from `HQM-dev` — and installing a live, firing workflow in
+a repository whose whole CI posture is that nothing fires unbidden. The convenience does not
 pay for either.
+
+*(An earlier version of this line said the order was `HQM-dev → Merged → main`. The owner corrected
+the topology on 2026-07-31: upstream lands on `Merged` first and is fixed there, reaches `HQM-dev`
+on greenlight, and `main` is cut from `HQM-dev`. The point above is unaffected — a scheduled
+workflow would still have to be committed straight to the default branch.)*
 
 ## Why the branch is never checked out
 

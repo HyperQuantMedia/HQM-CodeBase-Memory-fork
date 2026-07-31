@@ -59,11 +59,17 @@ promoted further:
 | `c4f2aa26` | **B8** — the reusable-workflow diagnostics are an editor false positive |
 | `155f7bdc` | the CI-dark claim in this file was wrong; corrected |
 
-**Promotion has not happened, and the gap is wider than this cycle.** `Merged` and `main` are both
-still at `56c2feb9` — **HQM-dev is 14 commits ahead of main**, which is the whole usability arc
-(`46d3f0c3` … `279d7e25`) plus all of the above. HQM-dev → Merged → main, owner-gated, and the
-visual pass (**B1**) comes first. Note the consequence: crons and dispatched workflows are read
-from the default branch, so none of the CI fixes in this list are in effect on `main` yet.
+**Promotion — done locally on 2026-07-31, not pushed.** `Merged`, `HQM-dev` and `main` all sit at
+`e2c2a1c0` on this machine, which is the verified upstream-merge commit (5775 C tests / 0 failed,
+260 UI tests, built `--with-ui`, served, bundle hash confirmed changed). `origin` is untouched:
+`origin/HQM-dev` at `2be1a469`, `origin/Merged` and `origin/main` at `56c2feb9`. All three pushes
+would be fast-forwards (+15 / +31 / +31).
+
+The consequence of pushing `main` is the one to weigh: crons and dispatched workflows are read from
+the **default** branch, so the two CI repairs (`nightly-soak.yml`'s non-callable reference, the
+illegal `type: number`) take effect the moment it lands, after standing dark since 2026-07-30. No
+*new* workflow file is in this range — `pr-acknowledgement.yml` is in upstream work we did not
+take. The four commits without `Signed-off-by` (**B6**) also land, inert while DCO is disabled.
 
 **The live edge is the owner's visual verification of rounds 5–8** — logged as **B1** in
 [`bugs.md`](bugs.md), with the specific surfaces and the one open question (the size
@@ -205,9 +211,31 @@ suite as evidence that a visual change works.
   `graph-ui/scratchpad/size-graph-probe/` (size-map overlap and clearance, plus the reference
   measurement of the approved server layout). Durable invariants are banked in
   `graph-ui/src/lib/*.test.ts`.
-- **Branches:** `HQM-dev` = active dev · `vanilla-upstream` = upstream pull-in only ·
-  `Merged` = integration · `main` = stable face of Merged, repo default. **Promotion is
-  HQM-dev → Merged → main. Never HQM-dev → main, never a direct commit on main.**
+- **Branches and the direction work flows — corrected by the owner 2026-07-31.**
+
+  | Branch | Job |
+  |---|---|
+  | `vanilla-upstream` | vanilla drops. Mirror only, never checked out, holds no HQM code |
+  | `Merged` | **integration.** Upstream lands *here first*; merge conflicts and fallout are fixed *here* |
+  | `HQM-dev` | our development work, protected from raw upstream churn |
+  | `main` | our own independent version, cut from `HQM-dev`. Repo default |
+
+  **Flow: `vanilla-upstream` → `Merged` (merge, fix, verify) → `HQM-dev` (after greenlight and
+  stability feedback) → `main` (version cut).** Never a direct commit on `main`.
+
+  **So containment runs the opposite way from a normal release chain: `main` ⊆ `HQM-dev` ⊆
+  `Merged`.** `Merged` is the *most* advanced branch, not the least — it carries upstream work our
+  own line has not accepted yet. An earlier version of this file said "promotion is HQM-dev →
+  Merged → main", which had it backwards and made `Merged` look like a staging area for our work
+  instead of a quarantine for theirs.
+
+  **Bring `Merged` up to `HQM-dev` before each upstream take.** `Merged` is not a long-lived
+  divergent branch; it is a landing strip. Merging upstream into a stale `Merged` integrates
+  against a base that lacks our current work, and the fallout then surfaces at the
+  `Merged → HQM-dev` step where it is far harder to attribute. Live example: on 2026-07-31
+  `Merged` sat **20 commits behind** `HQM-dev`, so the missed-graph merge would have been
+  integrated against a tree with no spacing probe, no light-stage render model and no size-map
+  parity — and the four light-theme defects the port carried would have been invisible.
 - **Syncing `vanilla-upstream`:** `hqm/scripts/sync-vanilla.sh` (report only) then
   `--push`. Never checked out — the push is a refspec from the fetched upstream ref, so no
   local branch exists to drift. It **refuses** when the incoming range adds or renames a file
