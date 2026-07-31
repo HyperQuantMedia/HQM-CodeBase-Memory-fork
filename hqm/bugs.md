@@ -83,7 +83,7 @@ buried in a constant. **No longer blocked on B7.**
 
 ### B2 — Size-view breadcrumb resolves a crumb by its label
 
-**Severity:** low · **Status:** open, known limitation, flagged when introduced
+**Severity:** low · **Status:** **fixed in `6b4a58be`** (onSelect passes the whole Crumb; the graph tab now feeds the sidebar the full path, which the label never matched) — awaiting eyes, B1 round 3
 
 `SizeTab`'s picked-node trail passes `Breadcrumb`, whose `onSelect` hands back only the
 crumb's label, not its prefix. With a repeated path segment (`src/parser/src`) a click jumps
@@ -275,7 +275,7 @@ revisit condition in
 
 ### B9 — Relationship chips use an opacity modifier, so they ignore the light stage
 
-**Severity:** low · **Status:** open, found 2026-07-31 while porting the missed graph
+**Severity:** low · **Status:** **fixed in `6b4a58be`** (`text-ink-soft`) — awaiting eyes, B1 round 3
 
 `FilterPanel.tsx`'s relationship chips carry `text-foreground/60`. Tailwind v4 opacity modifiers
 compile to a real alpha, so the colour cannot be theme-aware — the standing ruling is to name the
@@ -293,7 +293,7 @@ chip beside it.
 
 ### B12 — Size panel's sort button says "count" but sorts by bytes; file-count sort missing
 
-**Severity:** medium — a control that lies · **Status:** open, owner-found 2026-08-01 (B1 round 1)
+**Severity:** medium — a control that lies · **Status:** **fixed in `2f669858`** (name/size/files keys, distinct glyphs, legacy count→size migration) — awaiting eyes, B1 round 3
 
 `lib/sortOrder.ts` knows two keys, `name | count`, and `SizeTree.tsx:74` feeds **bytes** into the
 count slot — so the size panel's button is labelled count and actually sorts by size. The owner's
@@ -304,8 +304,7 @@ Belongs to Phase 3 (the sweep already touches this panel).
 
 ### B13 — Treemap view hides Settings and the toggle rail
 
-**Severity:** medium · **Status:** open, owner-found 2026-08-01 (B1 round 1) — deliberate gate,
-overruled
+**Severity:** medium · **Status:** **fixed in `2f669858`** (rail stable on every view; orbit disabled with a reason on the treemap) — awaiting eyes, B1 round 3
 
 `SizeTab.tsx` gates the auto-rotate toggle AND `SettingsMenu` behind `view !== "treemap"` (the
 comment reasons fov/bloom have nothing to act on in a DOM view). Owner ruling: **cycling views
@@ -314,8 +313,7 @@ not apply. Phase 3.
 
 ### B14 — The graph cross-link glyph reads as a share icon (third attempt still misread)
 
-**Severity:** low, but it defeated its own purpose · **Status:** open, owner-found 2026-08-01
-(B1 round 1)
+**Severity:** low, but it defeated its own purpose · **Status:** **fixed in `2f669858`** (the word carries the destination: "Graph" / "Size map") — awaiting eyes, B1 round 3
 
 The size tab's cross-link button ("Open the relationship graph") is the hand-drawn graph glyph —
 and the owner, hunting for exactly this button, could not find it because it reads as a platform

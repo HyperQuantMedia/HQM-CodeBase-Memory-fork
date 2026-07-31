@@ -1103,6 +1103,29 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
               {picked.path}
             </p>
           </div>
+          {/* C13 (owner reading 2026-08-01): the panel opens on pick only, and
+              stacks the drill path's totals ABOVE the picked node's details —
+              the click's context and its subject, one column. */}
+          <div className="px-4 py-3 border-b border-border/30 shrink-0">
+            <p className="text-[10px] font-medium text-ink-soft uppercase tracking-wider mb-1.5">
+              Path totals
+            </p>
+            <div className="space-y-0.5">
+              {crumbs.map((c) => (
+                <button
+                  key={c.path || "__root"}
+                  onClick={() => setFocus(c.path)}
+                  className="flex w-full items-center justify-between gap-2 text-[11px] text-ink-soft hover:text-primary transition-colors"
+                  title={`Focus ${c.name || project}`}
+                >
+                  <span className="truncate">{c.name || project}</span>
+                  <span className="tabular-nums text-ink-dim shrink-0">
+                    {formatBytes(c.bytes)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
           <dl className="px-4 py-3 space-y-1 text-[11px]">
             <div className="flex justify-between gap-2">
               <dt className="text-ink-soft">Size</dt>
@@ -1133,7 +1156,35 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
               <dd className="text-foreground tabular-nums">{picked.depth}</dd>
             </div>
           </dl>
-          <div className="flex items-center gap-1 px-4 py-3 border-t border-border/30">
+          {/* C13's lower half: a picked folder lists its children, heaviest
+              first — the current level's contents under the details. */}
+          {picked.children.length > 0 && (
+            <div className="px-4 py-3 border-t border-border/30 flex-1 min-h-0 overflow-y-auto">
+              <p className="text-[10px] font-medium text-ink-soft uppercase tracking-wider mb-1.5">
+                Contents
+              </p>
+              <div className="space-y-0.5">
+                {[...picked.children]
+                  .sort((a, b) => b.bytes - a.bytes)
+                  .map((c) => (
+                    <button
+                      key={c.path}
+                      onClick={() =>
+                        c.children.length > 0 ? setFocus(c.path) : setPicked(c)
+                      }
+                      className="flex w-full items-center justify-between gap-2 text-[11px] text-ink-soft hover:text-primary transition-colors"
+                      title={c.children.length > 0 ? `Drill into ${c.name}` : c.path}
+                    >
+                      <span className="truncate font-mono">{c.name}</span>
+                      <span className="tabular-nums text-ink-dim shrink-0">
+                        {formatBytes(c.bytes)}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-1 px-4 py-3 border-t border-border/30 shrink-0">
             <OpenButtons
               project={project}
               path={picked.path}
