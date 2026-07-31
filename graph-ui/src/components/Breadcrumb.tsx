@@ -6,7 +6,10 @@ interface BreadcrumbProps {
   crumbs: Crumb[];
   /** Project name, shown as the leading (root) segment. */
   root: string;
-  onSelect: (path: string, nodeIds: Set<number>) => void;
+  /** B2: a crumb is an identity, not a display string — the whole Crumb comes
+   * back, so a repeated path segment can never resolve to the wrong level.
+   * null = the root segment (clear the selection). */
+  onSelect: (crumb: Crumb | null) => void;
 }
 
 /** The header renders this element; the breadcrumb portals into it. */
@@ -38,7 +41,7 @@ export function Breadcrumb({ crumbs, root, onSelect }: BreadcrumbProps) {
       className="flex flex-wrap items-center justify-center gap-x-1 gap-y-0.5 text-[11px] leading-snug py-1"
     >
       <button
-        onClick={() => onSelect("", new Set())}
+        onClick={() => onSelect(null)}
         className="text-ink-soft hover:text-primary transition-colors max-w-[180px] truncate"
         title={`${root} — clear the selection`}
       >
@@ -52,7 +55,7 @@ export function Breadcrumb({ crumbs, root, onSelect }: BreadcrumbProps) {
               /
             </span>
             <button
-              onClick={() => onSelect(crumb.label, new Set(crumb.subtreeIds))}
+              onClick={() => onSelect(crumb)}
               className={`max-w-[220px] truncate transition-colors ${
                 last
                   ? "text-foreground font-medium"

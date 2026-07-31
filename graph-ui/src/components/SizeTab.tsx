@@ -690,15 +690,8 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           <span className="ml-auto text-[11px] text-ink-soft tabular-nums shrink-0">
             {formatBytes(node.bytes)} · {node.fileCount.toLocaleString()} files
           </span>
-          {focus && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFocus(crumbs[crumbs.length - 2]?.path ?? "")}
-            >
-              Up
-            </Button>
-          )}
+          {/* C9: no Up button — the drill path IS the up control, and the graph
+              view has no equivalent, so parity drops it rather than adds one. */}
         </div>
 
         <div className="flex-1 relative min-h-0 overflow-hidden">
@@ -708,10 +701,10 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
             <Breadcrumb
               crumbs={pickCrumbs}
               root={project}
-              onSelect={(label) => {
+              onSelect={(crumb) => {
                 /* A crumb names a level; jumping there means focusing its prefix.
-                   The deepest crumb is the file itself, not a folder to focus. */
-                const crumb = [...pickCrumbs].reverse().find((c) => c.label === label);
+                   The deepest crumb is the file itself, not a folder to focus.
+                   B2: the crumb arrives whole — no label lookup to mis-resolve. */
                 if (!crumb) {
                   setPicked(null);
                   return;

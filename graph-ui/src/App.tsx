@@ -208,6 +208,7 @@ export function App() {
         ) : (
           <StatsTab
             onSelectProject={(p) => navigate("graph", p)}
+            onSelectSizeMap={(p) => navigate("sizes", p)}
           />
         )}
       </main>

@@ -762,7 +762,18 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
             </ErrorBoundary>
 
             {crumbs.length > 0 && (
-              <Breadcrumb crumbs={crumbs} root={project} onSelect={handleSelectPath} />
+              <Breadcrumb
+                crumbs={crumbs}
+                root={project}
+                /* B2: the crumb's full key, not its label — a label lookup jumped
+                   to the deepest match when a path segment repeated, and it also
+                   fed the sidebar a path it could never equal. */
+                onSelect={(crumb) =>
+                  crumb
+                    ? handleSelectPath(crumb.full, new Set(crumb.subtreeIds))
+                    : handleSelectPath("", new Set())
+                }
+              />
             )}
             {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 

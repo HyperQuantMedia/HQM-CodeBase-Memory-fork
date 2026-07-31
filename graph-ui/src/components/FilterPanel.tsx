@@ -215,7 +215,7 @@ export function FilterPanel({
                       key={type}
                       onClick={() => onToggleEdgeType(type)}
                       className={`inline-flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[10px] font-medium transition-all border ${
-                        on ? "border-border/50 bg-foreground/[0.03] text-foreground/60" : "border-transparent opacity-20 text-ink-dim"
+                        on ? "border-border/50 bg-foreground/[0.03] text-ink-soft" : "border-transparent opacity-20 text-ink-dim"
                       }`}
                     >
                       {type.replace(/_/g, " ").toLowerCase()}

@@ -6,6 +6,8 @@ import { useUiMessages } from "../lib/i18n";
 
 interface StatsTabProps {
   onSelectProject: (project: string) => void;
+  /** C15: the size map is a first-class destination from the Projects tab. */
+  onSelectSizeMap?: (project: string) => void;
 }
 
 /* ── Glowy health dot ───────────────────────────────────── */
@@ -63,9 +65,12 @@ function HealthDot({ name }: { name: string }) {
   );
 }
 
-/* ── ADR button + modal ─────────────────────────────────── */
+/* ── ADR button + modal ─────────────────────────────────────
+ * Unmounted from the project rows per the cycle plan's E ruling (manage_adr is
+ * cross-session agent memory wearing the name ADR). Exported so the component
+ * survives for the one-line restore if a per-project notes field returns. */
 
-function AdrButton({ project }: { project: string }) {
+export function AdrButton({ project }: { project: string }) {
   const t = useUiMessages();
   const [hasAdr, setHasAdr] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
@@ -497,7 +502,7 @@ export function IndexProgress({ onDone }: { onDone: () => void }) {
 
 /* ── Main Stats Tab ─────────────────────────────────────── */
 
-export function StatsTab({ onSelectProject }: StatsTabProps) {
+export function StatsTab({ onSelectProject, onSelectSizeMap }: StatsTabProps) {
   const t = useUiMessages();
   const { projects, loading, error, refresh } = useProjects();
   const [showModal, setShowModal] = useState(false);
@@ -569,8 +574,13 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <AdrButton project={p.project.name} />
+                    {/* AdrButton unmounted per the cycle plan's E ruling: manage_adr is
+                        cross-session agent memory wearing the name ADR. One line to
+                        restore if a per-project notes field is ever wanted. */}
                     <button onClick={() => onSelectProject(p.project.name)} className="px-3 py-1.5 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-[12px] font-medium transition-all">{t.projects.viewGraph}</button>
+                    {onSelectSizeMap && (
+                      <button onClick={() => onSelectSizeMap(p.project.name)} className="px-3 py-1.5 rounded-lg bg-info/15 hover:bg-info/25 text-info text-[12px] font-medium transition-all">{t.projects.viewSizeMap}</button>
+                    )}
                     <button onClick={() => deleteProject(p.project.name)} className="px-2 py-1.5 rounded-lg hover:bg-destructive/10 text-ink-faint hover:text-destructive text-[12px] transition-all" title={t.projects.deleteTitle}>✕</button>
                   </div>
                 </div>
