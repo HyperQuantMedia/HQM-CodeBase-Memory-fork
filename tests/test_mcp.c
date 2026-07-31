@@ -1590,6 +1590,102 @@ TEST(tool_index_repository_missing_path) {
     PASS();
 }
 
+TEST(tool_index_repository_batch_rejects_bad_shapes) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+
+    /* empty array */
+    char *resp = cbm_mcp_handle_tool(srv, "index_repository", "{\"repo_paths\":[]}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "non-empty array"));
+    free(resp);
+
+    /* both spellings at once */
+    resp = cbm_mcp_handle_tool(srv, "index_repository",
+                               "{\"repo_paths\":[\"/tmp/a\"],\"repo_path\":\"/tmp/b\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "not both"));
+    free(resp);
+
+    /* name cannot cover a batch */
+    resp = cbm_mcp_handle_tool(srv, "index_repository",
+                               "{\"repo_paths\":[\"/tmp/a\"],\"name\":\"x\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "one override, many repositories"));
+    free(resp);
+
+    /* cross-repo-intelligence is a per-project pass */
+    resp = cbm_mcp_handle_tool(srv, "index_repository",
+                               "{\"repo_paths\":[\"/tmp/a\"],\"mode\":\"cross-repo-intelligence\"}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "target_projects"));
+    free(resp);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_index_repository_batch_two_repos_and_skip_and_continue) {
+    char tmp_dir[512];
+    snprintf(tmp_dir, sizeof(tmp_dir), "/tmp/cbm_batch_test_XXXXXX");
+    ASSERT_NOT_NULL(cbm_mkdtemp(tmp_dir));
+
+    char repo_a[512];
+    char repo_b[512];
+    snprintf(repo_a, sizeof(repo_a), "%s/cbmbatchalpha", tmp_dir);
+    snprintf(repo_b, sizeof(repo_b), "%s/cbmbatchbeta", tmp_dir);
+    cbm_mkdir(repo_a);
+    cbm_mkdir(repo_b);
+
+    char src[600];
+    snprintf(src, sizeof(src), "%s/main.go", repo_a);
+    FILE *fp = fopen(src, "w");
+    ASSERT_NOT_NULL(fp);
+    fprintf(fp, "package main\nfunc Alpha() {}\n");
+    fclose(fp);
+    snprintf(src, sizeof(src), "%s/main.go", repo_b);
+    fp = fopen(src, "w");
+    ASSERT_NOT_NULL(fp);
+    fprintf(fp, "package main\nfunc Beta() {}\n");
+    fclose(fp);
+
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    char args[2048];
+    /* the middle entry is invalid — it must fail alone, not kill the batch */
+    snprintf(args, sizeof(args), "{\"repo_paths\":[\"%s\",\"\",\"%s\"],\"mode\":\"fast\"}", repo_a,
+             repo_b);
+    char *resp = cbm_mcp_handle_tool(srv, "index_repository", args);
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"status\":\"partial\""));
+    ASSERT_NOT_NULL(strstr(resp, "\"requested\":3"));
+    ASSERT_NOT_NULL(strstr(resp, "\"succeeded\":2"));
+    ASSERT_NOT_NULL(strstr(resp, "\"failed\":1"));
+    /* the batch as a whole is not an error when any path succeeded */
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":false"));
+    free(resp);
+
+    /* both real repos are now indexed projects */
+    resp = cbm_mcp_handle_tool(srv, "list_projects", "{}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "cbmbatchalpha"));
+    ASSERT_NOT_NULL(strstr(resp, "cbmbatchbeta"));
+    free(resp);
+
+    resp = cbm_mcp_handle_tool(srv, "delete_project", "{\"project\":\"cbmbatchalpha\"}");
+    free(resp);
+    resp = cbm_mcp_handle_tool(srv, "delete_project", "{\"project\":\"cbmbatchbeta\"}");
+    free(resp);
+    cbm_mcp_server_free(srv);
+
+    snprintf(src, sizeof(src), "%s/main.go", repo_a);
+    remove(src);
+    snprintf(src, sizeof(src), "%s/main.go", repo_b);
+    remove(src);
+    cbm_rmdir(repo_a);
+    cbm_rmdir(repo_b);
+    cbm_rmdir(tmp_dir);
+    PASS();
+}
+
 TEST(tool_get_code_snippet_missing_qn) {
     cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
 
@@ -5227,6 +5323,8 @@ SUITE(mcp) {
 
     /* Pipeline-dependent tool handlers */
     RUN_TEST(tool_index_repository_missing_path);
+    RUN_TEST(tool_index_repository_batch_rejects_bad_shapes);
+    RUN_TEST(tool_index_repository_batch_two_repos_and_skip_and_continue);
     RUN_TEST(tool_get_code_snippet_missing_qn);
     RUN_TEST(tool_get_code_snippet_not_found);
     RUN_TEST(tool_search_code_missing_pattern);

@@ -321,6 +321,9 @@ typedef struct {
 static const tool_def_t TOOLS[] = {
     {"index_repository", "Index repository",
      "Index a repository into the knowledge graph. "
+     "BATCH: pass repo_paths=[\"a\",\"b\",...] instead of repo_path to index several "
+     "repositories in one call — each runs exactly as a single-path call would (own "
+     "supervised worker, skip-and-continue), and the response carries one entry per path. "
      "Special mode 'cross-repo-intelligence': skip extraction, only match Routes/Channels "
      "across projects to create CROSS_HTTP_CALLS/CROSS_ASYNC_CALLS/CROSS_CHANNEL edges. "
      "Requires target_projects param. Ensure target projects have fresh indexes first. "
@@ -332,6 +335,10 @@ static const tool_def_t TOOLS[] = {
      "of a flag is NOT a completeness guarantee; prefer grep inside flagged ranges.",
      "{\"type\":\"object\",\"properties\":{\"repo_path\":{\"type\":\"string\",\"description\":"
      "\"Path to the repository\"},"
+     "\"repo_paths\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1,"
+     "\"maxItems\":64,\"description\":\"Batch mode: index each listed repository in turn. "
+     "Mutually exclusive with repo_path and name; mode and persistence apply to every "
+     "entry. One response entry per path; a failing path never stops the rest.\"},"
      "\"mode\":{\"type\":\"string\","
      "\"enum\":[\"full\",\"moderate\",\"fast\",\"cross-repo-intelligence\"],"
      "\"default\":\"full\",\"description\":\"All modes run type-aware LSP call/usage "
@@ -347,7 +354,7 @@ static const tool_def_t TOOLS[] = {
      "\"persistence\":{\"type\":\"boolean\",\"default\":false,\"description\":"
      "\"Write compressed artifact to .codebase-memory/graph.db.zst for team sharing. "
      "Teammates can bootstrap from the artifact instead of full re-indexing.\"}"
-     "},\"required\":[\"repo_path\"]}"},
+     "}}"},
 
     {"search_graph", "Search graph",
      "Search the code knowledge graph for functions, classes, routes, and variables. Use INSTEAD "
@@ -4042,7 +4049,26 @@ char *cbm_mcp_index_run_supervised_path(const char *root_path) {
 
 bool cbm_path_within_root(const char *root_path, const char *abs_path); /* defined below */
 
+static char *handle_index_batch(cbm_mcp_server_t *srv, const char *args);
+
 static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
+    /* Batch (A1): repo_paths=[...] loops the single-path tool. Expanded BEFORE
+     * the supervisor gate on purpose — each per-path recursion re-enters this
+     * handler and gets its own supervised worker, so one crashing repository
+     * skips-and-continues instead of taking the whole batch down. */
+    if (args && strstr(args, "repo_paths")) {
+        yyjson_doc *probe = yyjson_read(args, strlen(args), 0);
+        bool is_batch = false;
+        if (probe) {
+            yyjson_val *proot = yyjson_doc_get_root(probe);
+            is_batch = proot && yyjson_obj_get(proot, "repo_paths") != NULL;
+            yyjson_doc_free(probe);
+        }
+        if (is_batch) {
+            return handle_index_batch(srv, args);
+        }
+    }
+
     /* Supervisor gate: run the index in a crash/hang-isolating worker subprocess
      * unless this process IS the worker or the kill switch (CBM_INDEX_SUPERVISOR=0)
      * is set. On spawn failure, fall through to the in-process path (degrade). */
@@ -4199,6 +4225,134 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     free(repo_path);
 
     char *result = cbm_mcp_text_result(json, rc != 0);
+    free(json);
+    return result;
+}
+
+/* Batch indexing (A1): loop repo_paths through the single-path handler.
+ * Each entry recurses into handle_index_repository with a per-path args
+ * object, so every repository gets the identical contract a lone call has —
+ * supervisor isolation, artifact bootstrap, the pipeline lock. A failing
+ * path records its error entry and the loop continues; the batch is flagged
+ * isError only when every path failed. */
+static char *handle_index_batch(cbm_mcp_server_t *srv, const char *args) {
+    enum { BATCH_MAX = 64 };
+    yyjson_doc *jdoc = yyjson_read(args, strlen(args), 0);
+    yyjson_val *jroot = jdoc ? yyjson_doc_get_root(jdoc) : NULL;
+    yyjson_val *rp_arr = jroot ? yyjson_obj_get(jroot, "repo_paths") : NULL;
+
+    if (!rp_arr || !yyjson_is_arr(rp_arr) || yyjson_arr_size(rp_arr) == 0) {
+        yyjson_doc_free(jdoc);
+        return cbm_mcp_text_result("repo_paths must be a non-empty array of strings", true);
+    }
+    if (yyjson_arr_size(rp_arr) > (size_t)BATCH_MAX) {
+        yyjson_doc_free(jdoc);
+        return cbm_mcp_text_result("repo_paths is capped at 64 entries per call", true);
+    }
+    if (yyjson_obj_get(jroot, "repo_path")) {
+        yyjson_doc_free(jdoc);
+        return cbm_mcp_text_result("pass repo_path or repo_paths, not both", true);
+    }
+    if (yyjson_obj_get(jroot, "name")) {
+        yyjson_doc_free(jdoc);
+        return cbm_mcp_text_result("name cannot apply to a batch — one override, many repositories",
+                                   true);
+    }
+    yyjson_val *mode_val = yyjson_obj_get(jroot, "mode");
+    const char *mode = mode_val ? yyjson_get_str(mode_val) : NULL;
+    if (mode && strcmp(mode, "cross-repo-intelligence") == 0) {
+        yyjson_doc_free(jdoc);
+        return cbm_mcp_text_result(
+            "cross-repo-intelligence takes target_projects, not repo_paths — run it per project",
+            true);
+    }
+    bool persistence =
+        yyjson_obj_get(jroot, "persistence") && yyjson_is_true(yyjson_obj_get(jroot, "persistence"));
+
+    yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *oroot = yyjson_mut_obj(out);
+    yyjson_mut_doc_set_root(out, oroot);
+    yyjson_mut_val *results = yyjson_mut_arr(out);
+
+    int total = 0;
+    int failed = 0;
+    size_t idx;
+    size_t max;
+    yyjson_val *val;
+    yyjson_arr_foreach(rp_arr, idx, max, val) {
+        const char *rp = yyjson_get_str(val);
+        yyjson_mut_val *entry = yyjson_mut_obj(out);
+        yyjson_mut_obj_add_strcpy(out, entry, "repo_path", rp ? rp : "");
+        total++;
+
+        char *sub_result = NULL;
+        if (!rp || !rp[0]) {
+            sub_result = cbm_mcp_text_result("repo_paths entries must be non-empty strings", true);
+        } else {
+            /* Per-path args: repo_path plus the batch-level mode/persistence. */
+            yyjson_mut_doc *sub = yyjson_mut_doc_new(NULL);
+            yyjson_mut_val *sroot = yyjson_mut_obj(sub);
+            yyjson_mut_doc_set_root(sub, sroot);
+            yyjson_mut_obj_add_strcpy(sub, sroot, "repo_path", rp);
+            if (mode) {
+                yyjson_mut_obj_add_strcpy(sub, sroot, "mode", mode);
+            }
+            if (persistence) {
+                yyjson_mut_obj_add_bool(sub, sroot, "persistence", true);
+            }
+            char *sub_args = yy_doc_to_str(sub);
+            yyjson_mut_doc_free(sub);
+            sub_result = handle_index_repository(srv, sub_args);
+            free(sub_args);
+        }
+
+        /* Unwrap the single-call envelope: {content:[{text}], isError}. */
+        bool sub_error = true;
+        yyjson_doc *env = sub_result ? yyjson_read(sub_result, strlen(sub_result), 0) : NULL;
+        if (env) {
+            yyjson_val *eroot = yyjson_doc_get_root(env);
+            yyjson_val *is_err = eroot ? yyjson_obj_get(eroot, "isError") : NULL;
+            sub_error = !is_err || !yyjson_is_false(is_err);
+            yyjson_val *content = eroot ? yyjson_obj_get(eroot, "content") : NULL;
+            yyjson_val *first =
+                content && yyjson_is_arr(content) ? yyjson_arr_get(content, 0) : NULL;
+            yyjson_val *text = first ? yyjson_obj_get(first, "text") : NULL;
+            const char *text_str = text ? yyjson_get_str(text) : NULL;
+            if (text_str) {
+                /* Prefer structured nesting when the text is itself JSON. */
+                yyjson_doc *inner = yyjson_read(text_str, strlen(text_str), 0);
+                if (inner && yyjson_is_obj(yyjson_doc_get_root(inner))) {
+                    yyjson_mut_obj_add_val(out, entry, "result",
+                                           yyjson_val_mut_copy(out, yyjson_doc_get_root(inner)));
+                } else {
+                    yyjson_mut_obj_add_strcpy(out, entry, "result", text_str);
+                }
+                if (inner) {
+                    yyjson_doc_free(inner);
+                }
+            }
+            yyjson_doc_free(env);
+        }
+        yyjson_mut_obj_add_bool(out, entry, "ok", !sub_error);
+        if (sub_error) {
+            failed++;
+        }
+        free(sub_result);
+        yyjson_mut_arr_append(results, entry);
+    }
+    yyjson_doc_free(jdoc);
+
+    yyjson_mut_obj_add_str(out, oroot, "status", failed == 0            ? "success"
+                                                 : failed == total      ? "failed"
+                                                                        : "partial");
+    yyjson_mut_obj_add_int(out, oroot, "requested", total);
+    yyjson_mut_obj_add_int(out, oroot, "succeeded", total - failed);
+    yyjson_mut_obj_add_int(out, oroot, "failed", failed);
+    yyjson_mut_obj_add_val(out, oroot, "results", results);
+
+    char *json = yy_doc_to_str(out);
+    yyjson_mut_doc_free(out);
+    char *result = cbm_mcp_text_result(json, failed == total);
     free(json);
     return result;
 }
