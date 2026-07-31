@@ -89,9 +89,11 @@ is a pure display job**, B1-gated like all `graph-ui` work. Phases 3 and 4 unaff
    which is the flag working in both positions AND the gate proving it can detect the
    updater when present. Log: `scratchpad/c-suite/build-selfupdate-on.log` (`EXIT=2`,
    expected). The ON artifact was then replaced: the default (OFF) `--with-ui` build was
-   rerun 2026-07-31 late — **`EXIT=0`, gate `BINARY COMPOSITION OK: 12 assertions passed`**
-   (`build-v0.9.0-hqm-v0.2.0-rc.log`), so `build/c/` holds a clean, gate-verified artifact
-   ready for the owner's B1 serve.
+   rerun — twice, because `scripts/test.sh`'s clean step deletes `build/c` and the suite ran
+   in between — most recently 2026-08-01 with **A1 included**: **`EXIT=0`, gate
+   `BINARY COMPOSITION OK: 12 assertions passed`** (`build-v0.9.0-hqm-v0.2.0-rc.log`).
+   `build/c/` holds a clean, gate-verified artifact ready for the owner's B1 serve.
+   Suite count on this tree is now **5769 / 0 / 18** (A1 added two tests).
 3. ~~Item 5's `mcp.c` half.~~ **DONE** in `dbd7add7` — `search_scratch_open`/`search_scratch_close`
    over a `cbm_mkdtemp` private dir, files via `cbm_mkstemp`, written through the descriptor
    (see the item-5 row in the table above).
