@@ -3,7 +3,7 @@
 
 # Backlog — proposed, blocked, and undecided
 
-Updated: 2026-07-30 · Queue for planning sessions
+Updated: 2026-07-31 · Queue for planning sessions
 
 ## How to use this file
 
@@ -16,6 +16,37 @@ Work that is **not** a defect. Three states only:
 
 Defects live in [`bugs.md`](bugs.md). Settled rulings live in [`decisions/`](decisions/) and do
 not belong here.
+
+**Much of this list is now absorbed by the approved cycle plan** —
+[`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cycle.md). The plan's own *Pending
+decisions* section is the live list of what is undecided; what follows is what predates it and is
+still open on its own terms.
+
+**Retired 2026-07-31**, because a ruling answered them — kept here as a pointer only, so nobody
+re-opens them:
+
+| Retired entry | Answer, and where it now lives |
+|---|---|
+| Density dial on the size projections | Not a judgment call any more. Sweep the quantile and match the **approved** graph's 57% intersection figure — method in [`bugs.md`](bugs.md) **B1**, Phase 0 |
+| Should the size map share the graph's node budget? | **Yes** — Phase 3 **C10**. The graph already solved it properly: user-controllable budget, persisted per project, honest notice. The size map's hardcoded 8,000 gets the same |
+| Are file-kind colours user-themeable? | **Yes** — `KIND_COLORS` joins the override store, so the one Colours tab serves both views. [`bugs.md`](bugs.md) **B3**, Phase 4a |
+
+---
+
+## blocked(owner) — added 2026-07-31
+
+### Whitelist semantics for the ignore rules — decided by a session, not the owner
+
+The target scope became **any path, including a whole hard drive**. The plan resolves whitelisting
+as **two controls** — folder rules prune the walk, filetype rules filter with descent handled for
+us — because that is the only reading that survives drive scale. **That is a session's call sitting
+in the owner's plan.** Confirm or override before Phase 4c.
+
+### When does promotion happen
+
+`main` is **14+ commits behind** and crons read the default branch, so **no CI fix is in effect**.
+This cycle adds more. At some point the gap stops being deferral and becomes a second branch nobody
+tests. Not scheduled.
 
 ---
 
@@ -38,13 +69,6 @@ already constrain it before a line is written:
 
 Needs: the go-ahead, and a call on whether a distiller runs in-process or as a sidecar.
 
-### Density dial on the size projections
-
-`RADII_FIT_QUANTILE = 0.70`. Judgment on a measured trade curve, not a derived constant. Table of
-what each notch costs is in
-[`decisions/2026-07-30-size-map-as-projection.md`](decisions/2026-07-30-size-map-as-projection.md).
-Revisit once the owner has looked at it (**B1**).
-
 ### Whether the treemap stays the default view
 
 It currently takes the slot the graph's force layout occupies, and is what opens on a cold visit.
@@ -56,7 +80,8 @@ line to change either way; not mine to change.
 ### Widen `Breadcrumb`'s `onSelect` to pass the `Crumb`
 
 Unblocks **B2** properly instead of working around it. Touches `GraphTab` as well as `SizeTab`,
-which is why it was not done inline mid-feature.
+which is why it was not done inline mid-feature. Settled 2026-07-31 and scheduled — it lands in the
+Phase 3 parity sweep.
 
 ### Promote the probe corpus harness out of `scratchpad/`
 
@@ -75,23 +100,12 @@ everyone's panel widths and sort orders, so it needs a migration or a decision n
 
 ## open questions
 
-### Are file-kind colours user-themeable?
-
-Decides how **B3** is fixed, and whether `KIND_COLORS` joins the override store or stays fixed
-product palette.
-
 ### Does the size map need the graph's dead-code lens equivalent?
 
 The graph has a code-health lens (`status` colouring, entry-point/test filters). The size map has
 no equivalent question — "which bytes are dead" is arguably a real one (unreferenced assets,
 orphaned build output) but it needs the graph's reachability data joined to the disk walk, and
 those two datasets currently do not meet.
-
-### Should the size map share the graph's node budget?
-
-The graph exposes an explicit node budget; the size map hard-caps at 8,000 with a footer notice.
-Parity would argue for one control. Against: the size cap exists because a treemap of 400k files is
-pathological regardless of what the user asks for.
 
 ### Upstream offer boundary
 
