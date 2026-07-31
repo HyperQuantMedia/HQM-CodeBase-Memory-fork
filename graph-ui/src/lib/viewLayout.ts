@@ -350,8 +350,13 @@ const SIZE_SPACING_K = 2.6;
  *
  * 0.70 is the pick: most spheres distinct, scene still populated. It is a judgment
  * on a trade curve, not a derived constant — if the owner's eye says otherwise, the
- * dial is here and the numbers above say what each notch costs. */
-const RADII_FIT_QUANTILE = 0.7;
+ * dial is here and the numbers above say what each notch costs.
+ *
+ * The table above was measured by hand on one machine over corpora that are not in
+ * the repository. `sizeMapSphereProbe.ts` now regenerates it from a seeded corpus, so
+ * the trade curve is reproducible rather than remembered — which is why the quantile
+ * is an injectable argument below and not only this constant. */
+export const RADII_FIT_QUANTILE = 0.7;
 
 /* Clear space demanded between two surfaces, in median radii. Touching spheres
  * read as one object, so a gap is not cosmetic. */
@@ -922,9 +927,10 @@ function fitToRadii(
   nodes: GraphNode[],
   radiusOf: (n: GraphNode) => number,
   gap: number,
+  quantile: number,
 ): GraphNode[] {
   if (nodes.length < 2) return nodes;
-  const k = radiiScale(nodes, radiusOf, gap, RADII_FIT_QUANTILE);
+  const k = radiiScale(nodes, radiusOf, gap, quantile);
   if (k <= 1.02) return nodes;
   for (const n of nodes) {
     n.x *= k; n.y *= k; n.z *= k;
@@ -963,6 +969,13 @@ export function applyViewMode(
    * size graph does not have — every node starts at the origin), and rescales the
    * radii alongside the coordinates in the final fit. */
   radiusOf?: (node: GraphNode) => number,
+  /* The density dial, injectable so a measurement rig can sweep it through the
+   * real layout instead of re-deriving the scale factor from an already-fitted
+   * scene — that reconstruction is impossible to do faithfully, because the fit
+   * clamps at 1 and never shrinks, so the information about what a lower quantile
+   * would have done is gone by the time it returns. Defaults to the shipped value,
+   * so no caller sees a behaviour change. Only meaningful with `radiusOf`. */
+  radiiFitQuantile: number = RADII_FIT_QUANTILE,
 ): GraphNode[] {
   if (mode === "default" || nodes.length === 0) return nodes;
 
@@ -1033,7 +1046,12 @@ export function applyViewMode(
    * two different things: a uniform-sphere graph against the source layout's own
    * spacing, a size graph against its own radii. */
   return radiusOf
-    ? fitToRadii(centered(out), radiusOf, medianRadius * RADII_FIT_GAP_K)
+    ? fitToRadii(
+        centered(out),
+        radiusOf,
+        medianRadius * RADII_FIT_GAP_K,
+        radiiFitQuantile,
+      )
     : fitToSpacing(centered(out), target);
 }
 

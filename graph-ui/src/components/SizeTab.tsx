@@ -24,6 +24,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { SizeTree } from "./SizeTree";
 import { GraphTabIcon } from "./TabIcons";
 import { loadFlag, loadWidth, saveFlag, saveWidth } from "../lib/panelState";
+import { useSizeMapSphereProbe } from "../hooks/useSizeMapSphereProbe";
 import {
   APPEARANCE_DEFAULTS,
   loadAppearances,
@@ -348,6 +349,32 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
     });
   }, []);
 
+  /* The spacing dial, and the delegated job that measures it.
+   *
+   * The probe is the only thing that moves this value, and it moves it only when
+   * every projection landed inside the band measured off the approved relationship
+   * graph. Until someone asks for a measurement it sits at the shipped default, so a
+   * cold visit renders exactly what it rendered before this existed. */
+  const sphereProbe = useSizeMapSphereProbe();
+
+  const measureSpacing = useCallback(() => {
+    if (visibleFiles.length === 0) return;
+    /* The corpus that is actually on screen — the *focused* subtree's files, kind
+     * filters already applied. Measuring the whole corpus would answer a question
+     * about a scene nobody is looking at. */
+    /* Paths are re-rooted at the focus, so the probe builds the same tree shape the
+     * scene did — `sizeTreeToGraph(node)` starts from the focused subtree, and a
+     * corpus still carrying its ancestor segments would nest one level deeper and
+     * measure a different layout. */
+    const prefix = focus === "" ? "" : `${focus}/`;
+    sphereProbe.measure({
+      name: project ?? "",
+      files: visibleFiles
+        .filter((f) => prefix === "" || f.path.startsWith(prefix))
+        .map((f) => ({ path: f.path.slice(prefix.length), bytes: f.bytes })),
+    });
+  }, [focus, project, sphereProbe, visibleFiles]);
+
   const scene = useMemo(() => {
     if (!sizeGraph || view === "treemap") return null;
     /* radiusOf is what makes this a size map rather than a graph of the same tree:
@@ -361,9 +388,10 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
       DEFAULT_LAYOUT_PARAMS,
       undefined,
       drawnRadius,
+      sphereProbe.quantile,
     );
     return { nodes: placed, edges: sizeGraph.edges, total_nodes: placed.length };
-  }, [sizeGraph, view]);
+  }, [sizeGraph, view, sphereProbe.quantile]);
 
   /* Frame the whole scene whenever the geometry changes shape — a new projection, a
    * new focus, a kind switched off. Not on every render: reframing on a no-op would
@@ -375,9 +403,12 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
     }
     const all = new Set(scene.nodes.map((n) => n.id));
     setCameraTarget(computeCameraTarget(scene.nodes, all, viewSettings.fov));
-    /* Keyed on what changes the layout, deliberately not on `scene` itself. */
+    /* Keyed on what changes the layout, deliberately not on `scene` itself. The
+     * spacing dial belongs in that list: adopting a new notch rescales the whole
+     * scene, and a camera framed for the old extent leaves it half off screen —
+     * which reads as broken controls, not as a resize. */
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, [view, focus, source, mutedKinds]);
+  }, [view, focus, source, mutedKinds, sphereProbe.quantile]);
 
   /* Clicking a sphere does what clicking a tile does. */
   const onSceneNodeClick = useCallback(
@@ -887,6 +918,41 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           <span>
             {sizeGraph.nodes.length.toLocaleString()} drawn · sphere volume is file size
           </span>
+        )}
+        {/* Spacing: the value in force, and the delegated job that measures it.
+            Stated rather than hidden, because it is the one number that decides
+            whether a sphere's own bytes are readable, and the earlier version of it
+            was a constant nobody could check. */}
+        {sizeGraph && (
+          <span className="flex items-center gap-2">
+            <span>spacing {sphereProbe.quantile.toFixed(2)}</span>
+            {sphereProbe.status === "running" ? (
+              <button
+                type="button"
+                onClick={sphereProbe.cancel}
+                className="underline underline-offset-2 hover:text-ink"
+              >
+                measuring
+                {sphereProbe.progress
+                  ? ` ${sphereProbe.progress.done}/${sphereProbe.progress.total}`
+                  : ""}{" "}
+                — stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={measureSpacing}
+                className="underline underline-offset-2 hover:text-ink"
+              >
+                measure
+              </button>
+            )}
+          </span>
+        )}
+        {/* Past two seconds the user is told, and told what the view is showing
+            meanwhile. Amber, because a stale scene is a warning and not a status. */}
+        {sphereProbe.notice && (
+          <span className="text-warning">{sphereProbe.notice}</span>
         )}
         {data.truncated && (
           <span className="text-warning">
