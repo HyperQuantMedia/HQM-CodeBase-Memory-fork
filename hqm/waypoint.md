@@ -134,6 +134,9 @@ suite as evidence that a visual change works.
   — why we sit on v0.9.0 by choice, why the daemon waits, the version rule
 - [`notes/2026-07-31-upstream-issue-overlap.md`](notes/2026-07-31-upstream-issue-overlap.md) —
   DeusData's open issues that touch our work, and what is worth offering back
+- [`decisions/2026-07-31-sphere-probe-seeded-corpus.md`](decisions/2026-07-31-sphere-probe-seeded-corpus.md)
+  — the spacing dial is measured now: committed probe, seeded corpus, delegated thread, the 2 s
+  notify rule, and the fixture fault that looked exactly like a layout fault
 - [`decisions/2026-07-31-vanilla-sync.md`](decisions/2026-07-31-vanilla-sync.md) — how
   `vanilla-upstream` follows upstream without lighting the repo up
 - [`decisions/2026-07-30-view-parity.md`](decisions/2026-07-30-view-parity.md) — one shell, two
@@ -149,7 +152,13 @@ suite as evidence that a visual change works.
 - [`notes/2026-07-30-parity-rounds.md`](notes/2026-07-30-parity-rounds.md) — rounds 5–8
 - Pure logic, all unit-tested without WebGL: `graph-ui/src/lib/` — `sceneInk.ts` ·
   `appearance.ts` · `viewLayout.ts` · `sizeMap.ts` · `sizeGraph.ts` · `sortOrder.ts` ·
-  `panelState.ts` · `typeScale.ts`
+  `panelState.ts` · `typeScale.ts` · `sizeMapSphereProbe.ts`
+- **The spacing probe**, the first delegated background job in this UI: `npm run probe:spheres`
+  headless, or the size view's footer "measure" link to run it on a worker over the corpus on
+  screen. Past 2 s it says so and names what is still being shown; it applies a value only when
+  every projection landed inside the band, and never touches the dial otherwise.
+  `src/lib/sizeMapSphereProbe.ts` · `src/workers/sizeMapSphereProbe.worker.ts` ·
+  `src/hooks/useSizeMapSphereProbe.ts` · `scripts/sizeMapSphereProbe.sweep.ts`
 - Shared UI shell: `CollapsibleSection.tsx` · `ResizeHandle.tsx` · `SortControl.tsx` ·
   `TabIcons.tsx` — used by both tabs, so a change lands on both
 - `src/ui/http_server.c` — `/api/open` (root-fenced), `/api/file-sizes` (disk walk),
@@ -171,6 +180,11 @@ suite as evidence that a visual change works.
 - **Test invocation:** `npx vitest run`. `--reporter=basic` was removed in vitest 4 and errors
   out; the default reporter is fine. Vitest 4 also swallows `console.log` under `run`, so the
   probe rigs write a report file instead.
+- **Spacing sweep:** `cd graph-ui && npm run probe:spheres` — own config, so it never joins
+  `npm test`. Output in `graph-ui/scratchpad/sphere-probe/report.txt`. Seeded synthetic corpus by
+  default; `SPHERE_PROBE_CORPUS=<file-sizes.json>` points it at a real one, and
+  `SPHERE_PROBE_FILES` / `SPHERE_PROBE_SEED` size the synthetic one. **Read the `corpus:` line
+  before trusting a sweep** — a degenerate result is usually the fixture, not the layout.
 - Probe rigs, both gitignored with their own READMEs:
   `graph-ui/scratchpad/view-layout-probe/` (projection geometry) and
   `graph-ui/scratchpad/size-graph-probe/` (size-map overlap and clearance, plus the reference

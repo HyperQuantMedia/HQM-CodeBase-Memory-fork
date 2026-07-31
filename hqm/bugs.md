@@ -48,12 +48,17 @@ missed all sixteen defects of rounds 1–4 and all four of round 5. The surfaces
 
 **Repro:** hard-reload `http://127.0.0.1:9749`.
 
-**The density is no longer an owner judgment call** (ruled 2026-07-31): sweep
-`RADII_FIT_QUANTILE` in `graph-ui/scratchpad/size-graph-probe/`, measure the nearest-neighbour
-spacing distribution at each notch, and propose the value matching the **already-approved**
-relationship graph — **57% of sampled nodes intersect a neighbour**, the reference measurement the
-rig already holds. Calibrate against the accepted artifact, never against an ideal. Blocked on
-**B7**'s fixture question before the sweep can run.
+**The density half is measured and answered** (2026-07-31). `npm run probe:spheres` sweeps
+`RADII_FIT_QUANTILE` through the real layout and scores every notch against the band below the
+**already-approved** relationship graph (57% of sampled nodes intersecting a neighbour). It
+recommends **0.70 — the value already shipping** — on the real 26k-file corpus (21.8% / 22.0% /
+21.0% overlapping across sphere / cone / tree) and on the seeded synthetic corpus independently,
+reproducing the hand-measured table from a different code path. Ruling and the fixture calibration:
+[`decisions/2026-07-31-sphere-probe-seeded-corpus.md`](decisions/2026-07-31-sphere-probe-seeded-corpus.md).
+
+The question left for the eye is therefore *"does 0.70 look right"*, not *"what number"* — and the
+size view's footer now names the value in force, so what is being judged is on screen rather than
+buried in a constant. **No longer blocked on B7.**
 
 ### B2 — Size-view breadcrumb resolves a crumb by its label
 
@@ -131,7 +136,8 @@ re-open only if one of these four ever enters an offer.
 
 ### B7 — Probe rigs are picked up by the default test run
 
-**Severity:** papercut · **Status:** open, pre-existing pattern
+**Severity:** papercut · **Status:** **narrowed 2026-07-31** — the replacement is clean; the two
+old rigs are not
 
 `graph-ui/scratchpad/view-layout-probe/probe.test.ts` and `.../size-graph-probe/probe.test.ts`
 match vitest's default include, so `npx vitest run` executes them on a machine that has their
@@ -143,6 +149,17 @@ filter, so that would also break the documented way of *running* the probes.
 
 **Fix shape:** rename the rigs off the `.test.ts` suffix and invoke them through their own
 config, or commit small fixtures. Neither is urgent while the rigs are throwaway.
+
+**That fix shape is now demonstrated, not theoretical.** The sphere probe that replaces
+`size-graph-probe/` does both halves: `graph-ui/scripts/sizeMapSphereProbe.sweep.ts` is not named
+`*.test.ts` and runs through `scripts/vitest.sphereProbe.config.ts`, so `npm test` never collects
+it; and its corpus is generated from a seed, so it needs no fixture on disk. **The 47k-node fixture
+question that gated this is gone** — nothing has to be committed, released, or refetched.
+
+The two old rigs still match the default include and still hold gitignored payloads, so B7 stays
+open for them. They are kept for one reason: `p4.json` and `corpus.json` are the only real corpora
+on this machine, and they are the calibration reference the synthetic fixture is checked against.
+Deleting them is cheap to say and expensive to undo — `p4` needs a 25 GB re-index.
 
 ### B8 — VS Code reports "Unable to find reusable workflow" on every local `uses:`
 

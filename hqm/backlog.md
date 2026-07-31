@@ -83,13 +83,19 @@ Unblocks **B2** properly instead of working around it. Touches `GraphTab` as wel
 which is why it was not done inline mid-feature. Settled 2026-07-31 and scheduled — it lands in the
 Phase 3 parity sweep.
 
-### Promote the probe corpus harness out of `scratchpad/`
+### Promote the remaining probe rig out of `scratchpad/`
 
-Both probe rigs load real payloads that are gitignored, so neither runs on a clean checkout. The
-harness itself (strided nearest-neighbour sampling, clearance quantiles, the reference measurement
-of the approved layout) has proved useful three times now and is the only reason the density
-mistake was caught. Blocked on nothing except a call on **where a 47k-node fixture lives** — the
-repo, a release asset, or regenerated on demand. See also **B7**.
+**Half done, 2026-07-31.** The size-map half is promoted and committed — `sizeMapSphereProbe.ts`
+plus its worker, hook, runner and tests, with a **seeded synthetic corpus**, so the fixture question
+that blocked this ("where does a 47k-node fixture live") is answered by not needing one. Ruling:
+[`decisions/2026-07-31-sphere-probe-seeded-corpus.md`](decisions/2026-07-31-sphere-probe-seeded-corpus.md).
+
+**Still in `scratchpad/`: `view-layout-probe/`** — the projection-geometry rig, which measures the
+relationship graph's own layout rather than the size map's radii. Same treatment would work
+(generated corpus, own vitest config); nobody has needed it since. Its `corpus.json` is also the
+approved graph's reference measurement, so promoting it means deciding what stands in for a real
+47k-node *graph* payload — a harder question than the size map's, because the calibration figure
+itself came from that file.
 
 ### Naming residue: "CBM" / "codebase-memory" → Cartograph
 
@@ -99,6 +105,16 @@ deliberate, not residue. The storage keys are user-invisible; renaming them sile
 everyone's panel widths and sort orders, so it needs a migration or a decision not to bother.
 
 ## open questions
+
+### Should the spacing dial be a user control?
+
+The probe measures it and the footer now states it, but nobody can move it by hand — the delegated
+measurement is the only writer. Two things argue for a control: the value is
+**projection-and-corpus-dependent** (measured — the `tree` fit no-ops across half the range on one
+corpus and responds across all of it on another), and C10 is already giving the size map a
+user-controllable node budget, so a second dial in the same menu is cheap. Against: two controls
+that both change how crowded the scene looks, and the measured answer has agreed with the shipped
+value on every corpus tried so far.
 
 ### Does the size map need the graph's dead-code lens equivalent?
 
