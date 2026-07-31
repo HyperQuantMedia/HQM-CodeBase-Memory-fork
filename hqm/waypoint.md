@@ -36,10 +36,10 @@ home to DeusData, shipped the dropper composite, and had `GNU_STACK RWE` on ever
 | 2 | Phone-home removed — thread, notice injection, 4 struct fields, 3 call sites | done, **gate-verified** |
 | 3 | Self-update behind `CBM_ENABLE_SELF_UPDATE` (default 0) **and** repointed at HQM releases | done, **gate-verified** |
 | 4 | `-DSQLITE_OMIT_LOAD_EXTENSION` | done, **gate-verified** |
-| 5 | Private/exclusive temp paths | **HALF DONE** — `diagnostics.c` done via `diag_open_private()`; `mcp.c` search-scratch NOT started |
+| 5 | Private/exclusive temp paths | **done** — `diagnostics.c` via `diag_open_private()`; `mcp.c` search scratch now a `cbm_mkdtemp` private dir with `cbm_mkstemp` files written through their descriptors (`write_scoped_filelist` takes the open stream; three cleanup sites collapse into `search_scratch_close`) |
 | 6 | `pass_envscan.c` symlink + buffer truncation | done (needed 3 foundation files, see below) |
 | 7 | mimalloc timestamps + `-Wdate-time` + `--no-insert-timestamp` | done |
-| 8 | `scripts/ci/check-binary-composition.sh` | file in place; **`package-release.sh` wiring NOT done** |
+| 8 | `scripts/ci/check-binary-composition.sh` | **done** — adopted and wired into `scripts/build.sh` (there is no `package-release.sh` on this branch; it arrived with the 547). Runs on every local build, `CBM_SKIP_COMPOSITION_GATE=1` opts out. Move it to packaging, after strip, if packaging is ever adopted |
 
 **Committed on `HQM-dev` as work-in-progress** once the gate went green, so a session switch
 loses nothing. It is *not* a finished cycle: items 5 and 8 are incomplete, so do not cut a
@@ -79,6 +79,15 @@ release from this state.
 - **A wrong diagnosis stated confidently is worse than none.** TEMP/`cbm_tmpdir` was asserted as
   the root cause of the 98 daemon failures; three-way testing disproved it. The comment in
   `run-tests.sh` now records the disproof.
+- **Never edit a shell script that is currently executing.** Bash reads a script
+  incrementally, so inserting lines shifts byte offsets under the running interpreter and it
+  can execute garbage from the new text. `scripts/build.sh` was edited mid-build on
+  2026-07-31; if a build ends inexplicably right after a script edit, rerun it clean before
+  believing the result.
+- **Never run two builds at once in this tree.** They share `build/c` and collide with
+  `unable to rename temporary '…prod_lsp_all-….o.tmp' to output file` — which reads like a
+  toolchain fault and is just two makes in one directory. Same rule as the two test suites,
+  which share a HOME-based cache. One build at a time, or use a separate worktree.
 - Environment: use the wrapper scripts in `scratchpad/c-suite/`. Four separate MSYS gaps
   (`nodejs`, `git`, a real `python3.exe`, `C:/Python314` for its DLL) each fail in a way that
   does not name its cause.

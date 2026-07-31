@@ -97,3 +97,34 @@ else
 fi
 
 echo "=== Build complete: build/c/codebase-memory-mcp ==="
+
+# Step 3: Binary composition gate.
+#
+# Asserts what must NOT be inside the artifact — an executable stack, updater URLs,
+# SQLite extension loading, test-only environment seams — plus a canary proving the
+# needle scan can read the file at all, so a compressed or empty binary fails instead
+# of passing. Source review cannot establish any of it: each item regresses invisibly
+# through one restored #include, one Makefile edit, or one revived call site.
+#
+# Upstream runs this from scripts/package-release.sh, which this fork does not have —
+# packaging arrived with upstream work we have not taken. The local build IS this
+# fork's verification path (CI is dark by owner order), so it runs here, on every
+# build, rather than at a packaging step that does not exist yet. When packaging is
+# adopted, move it there: after strip, which is the last byte-changing step.
+#
+# CBM_SKIP_COMPOSITION_GATE=1 skips it. Intended for bisecting a build failure, not
+# for release work — a release built with it set is unverified by definition.
+GATE="$ROOT/scripts/ci/check-binary-composition.sh"
+BUILT="$ROOT/build/c/codebase-memory-mcp"
+[ -f "$BUILT" ] || BUILT="$BUILT.exe"
+if [ "${CBM_SKIP_COMPOSITION_GATE:-0}" = "1" ]; then
+    echo "=== composition gate SKIPPED (CBM_SKIP_COMPOSITION_GATE=1) ==="
+elif [ ! -f "$GATE" ]; then
+    echo "=== composition gate missing: $GATE ===" >&2
+    exit 2
+else
+    # --variant matters: the gate expects the embedded HTTP/UI server in a ui build
+    # and asserts its absence in a standard one.
+    if $WITH_UI; then GATE_VARIANT=ui; else GATE_VARIANT=standard; fi
+    bash "$GATE" --variant="$GATE_VARIANT" "$BUILT" || exit 2
+fi

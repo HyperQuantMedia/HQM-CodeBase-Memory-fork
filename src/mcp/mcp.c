@@ -65,10 +65,17 @@ enum {
 #include <io.h>
 #include <process.h>
 #define getpid _getpid
+/* Write through the descriptor cbm_mkstemp returned rather than reopening its path —
+ * see search_scratch_open. Reopening by name reintroduces exactly the window the
+ * exclusive create closed. */
+#define mcp_fdopen _fdopen
+#define mcp_close _close
 #else
 #include <unistd.h>
 #include <poll.h>
 #include <fcntl.h>
+#define mcp_fdopen fdopen
+#define mcp_close close
 #endif
 #include <yyjson/yyjson.h>
 #include <stdint.h> // int64_t
@@ -5181,9 +5188,12 @@ static void classify_all_grep_hits(grep_match_t *gm, int gm_count, cbm_store_t *
  * hits would be dropped anyway — results-preserving by construction.
  * *out_written receives the number of records written (0 = the filter
  * excluded every indexed file). */
+/* `fl` is the caller's already-open binary stream on the descriptor cbm_mkstemp
+ * created inside the private scratch directory; this function never opens or closes
+ * it, so the list is never reachable through a predictable pathname. */
 static bool write_scoped_filelist(cbm_mcp_server_t *srv, const char *project, const char *root_path,
-                                  const char *filelist, bool has_path_filter,
-                                  cbm_regex_t *path_regex, int *out_written) {
+                                  FILE *fl, bool has_path_filter, cbm_regex_t *path_regex,
+                                  int *out_written) {
     *out_written = 0;
     cbm_store_t *pre_store = resolve_store(srv, project);
     if (!pre_store) {
@@ -5195,7 +5205,6 @@ static bool write_scoped_filelist(cbm_mcp_server_t *srv, const char *project, co
         indexed_count == 0) {
         return false;
     }
-    FILE *fl = fopen(filelist, "wb");
     bool ok = false;
     int written = 0;
     if (fl) {
@@ -5234,7 +5243,7 @@ static bool write_scoped_filelist(cbm_mcp_server_t *srv, const char *project, co
 #endif
             written++;
         }
-        (void)fclose(fl);
+        /* Not closed here: the caller opened it and closes it. */
         ok = true;
     }
     for (int fi = 0; fi < indexed_count; fi++) {
@@ -5302,16 +5311,102 @@ static bool validate_search_args(const char *root_path, const char *file_pattern
     return true;
 }
 
-/* Write pattern to a temp file for grep -f. Returns true on success. */
-static bool write_pattern_file(char *tmpfile, int tmpfile_sz, const char *pattern) {
-    snprintf(tmpfile, tmpfile_sz, "%s/cbm_search_%d.pat", cbm_tmpdir(), (int)getpid());
-    FILE *tf = fopen(tmpfile, "w");
-    if (!tf) {
+/* ── search scratch files ──────────────────────────────────────────
+ *
+ * search_code needs two throwaway files: the pattern for `grep -f`, and the list of
+ * indexed paths for `xargs`. Both used to be fixed, guessable names derived from the
+ * pid — "<tmp>/cbm_search_<pid>.pat" and its ".files" companion — opened with a plain
+ * fopen in a directory every local user can write.
+ *
+ * Two problems with that. Another local user can pre-plant a symlink at either name
+ * and redirect the write, as this process's user. And two searches inside one process
+ * collide on the same two names, so a concurrent search could read a filelist the
+ * other one was mid-write on.
+ *
+ * Both now live inside a directory created by cbm_mkdtemp — 0700 on POSIX, an
+ * owner-only DACL on Windows, with an unguessable XXXXXX suffix — and each file is
+ * created by cbm_mkstemp: O_CREAT|O_EXCL at 0600, so the create fails rather than
+ * following anything already at the name. Every write goes through the descriptor
+ * cbm_mkstemp returned; neither path is ever reopened by name. The directory makes
+ * the collision impossible too, since each search gets its own.
+ *
+ * grep and xargs still receive the paths as strings — they must, they are separate
+ * processes — but by then the files exist, are owned by us, and sit under a directory
+ * nothing else can enter. */
+typedef struct {
+    char dir[CBM_SZ_256];      /* private directory, "" when never created */
+    char pattern[CBM_SZ_256];  /* <dir>/pattern-XXXXXX */
+    char filelist[CBM_SZ_256]; /* <dir>/filelist-XXXXXX */
+} search_scratch_t;
+
+/* Create the private directory and write the pattern into it. */
+static bool search_scratch_open(search_scratch_t *scratch, const char *pattern) {
+    memset(scratch, 0, sizeof(*scratch));
+    int written = snprintf(scratch->dir, sizeof(scratch->dir), "%s/cbm-search-XXXXXX",
+                           cbm_tmpdir());
+    if (written <= 0 || written >= (int)sizeof(scratch->dir) || !cbm_mkdtemp(scratch->dir)) {
+        scratch->dir[0] = '\0';
         return false;
     }
-    (void)fprintf(tf, "%s\n", pattern);
-    (void)fclose(tf);
-    return true;
+    written = snprintf(scratch->pattern, sizeof(scratch->pattern), "%s/pattern-XXXXXX",
+                       scratch->dir);
+    if (written <= 0 || written >= (int)sizeof(scratch->pattern)) {
+        return false;
+    }
+    int descriptor = cbm_mkstemp(scratch->pattern);
+    if (descriptor < 0) {
+        scratch->pattern[0] = '\0';
+        return false;
+    }
+    FILE *sink = mcp_fdopen(descriptor, "w");
+    if (!sink) {
+        (void)mcp_close(descriptor);
+        return false;
+    }
+    (void)fprintf(sink, "%s\n", pattern);
+    return fclose(sink) == 0;
+}
+
+/* Open the filelist inside the same private directory. Returns a stream the caller
+ * closes, or NULL. Binary mode: the records are NUL-separated for `xargs -0`. */
+static FILE *search_scratch_filelist(search_scratch_t *scratch) {
+    if (scratch->dir[0] == '\0') {
+        return NULL;
+    }
+    int written = snprintf(scratch->filelist, sizeof(scratch->filelist), "%s/filelist-XXXXXX",
+                          scratch->dir);
+    if (written <= 0 || written >= (int)sizeof(scratch->filelist)) {
+        scratch->filelist[0] = '\0';
+        return NULL;
+    }
+    int descriptor = cbm_mkstemp(scratch->filelist);
+    if (descriptor < 0) {
+        scratch->filelist[0] = '\0';
+        return NULL;
+    }
+    FILE *sink = mcp_fdopen(descriptor, "wb");
+    if (!sink) {
+        (void)mcp_close(descriptor);
+        scratch->filelist[0] = '\0';
+    }
+    return sink;
+}
+
+/* Remove both files and the directory. Safe on a partially-created scratch, and safe
+ * to call twice — every field is cleared as it goes. */
+static void search_scratch_close(search_scratch_t *scratch) {
+    if (scratch->filelist[0] != '\0') {
+        (void)cbm_unlink(scratch->filelist);
+        scratch->filelist[0] = '\0';
+    }
+    if (scratch->pattern[0] != '\0') {
+        (void)cbm_unlink(scratch->pattern);
+        scratch->pattern[0] = '\0';
+    }
+    if (scratch->dir[0] != '\0') {
+        (void)cbm_rmdir(scratch->dir);
+        scratch->dir[0] = '\0';
+    }
 }
 
 /* Compile a path filter regex. Returns true if compiled successfully. */
@@ -5440,8 +5535,9 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
     }
 
     /* ── Phase 1: Grep scan ──────────────────────────────────── */
-    char tmpfile[CBM_SZ_256];
-    if (!write_pattern_file(tmpfile, sizeof(tmpfile), pattern)) {
+    search_scratch_t scratch;
+    if (!search_scratch_open(&scratch, pattern)) {
+        search_scratch_close(&scratch);
         char errmsg[CBM_SZ_256];
         snprintf(errmsg, sizeof(errmsg), "search failed: cannot create temp file (%s)",
                  strerror(errno));
@@ -5462,13 +5558,15 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
      * Query the graph for distinct file paths, write them to a temp file,
      * then use xargs to pass them to grep. Falls back to recursive grep if
      * no indexed files found (project not fully indexed). */
-    char filelist[CBM_SZ_256];
-    snprintf(filelist, sizeof(filelist), "%s.files", tmpfile);
     bool scoped = false;
     int scoped_written = 0;
 
-    scoped = write_scoped_filelist(srv, project, root_path, filelist, has_path_filter,
-                                   has_path_filter ? &path_regex : NULL, &scoped_written);
+    FILE *filelist_stream = search_scratch_filelist(&scratch);
+    if (filelist_stream) {
+        scoped = write_scoped_filelist(srv, project, root_path, filelist_stream, has_path_filter,
+                                       has_path_filter ? &path_regex : NULL, &scoped_written);
+        (void)fclose(filelist_stream);
+    }
 
     /* Collect grep matches into array */
     int gm_count = 0;
@@ -5479,18 +5577,18 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
          * platform-dependent (GNU execs grep once with no operands, BSD
          * skips), and the post-grep filter would drop every hit anyway. */
         gm = malloc(sizeof(grep_match_t)); /* empty set; freed below */
-        cbm_unlink(tmpfile);
-        cbm_unlink(filelist);
+        search_scratch_close(&scratch);
     } else {
         char cmd[CBM_SZ_4K];
-        build_grep_cmd(cmd, sizeof(cmd), use_regex, scoped, file_pattern, tmpfile, filelist,
+        build_grep_cmd(cmd, sizeof(cmd), use_regex, scoped, file_pattern, scratch.pattern,
+                       scratch.filelist,
                        root_path);
 
         FILE *fp = cbm_popen(cmd, "r");
         if (!fp) {
-            cbm_unlink(tmpfile);
+            search_scratch_close(&scratch);
             if (scoped) {
-                cbm_unlink(filelist);
+                /* removed with the scratch directory */
             }
             free(root_path);
             free(pattern);
@@ -5502,9 +5600,9 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
         gm = collect_grep_matches(fp, root_path, strlen(root_path), has_path_filter, &path_regex,
                                   grep_limit, &gm_count);
         cbm_pclose(fp);
-        cbm_unlink(tmpfile);
+        search_scratch_close(&scratch);
         if (scoped) {
-            cbm_unlink(filelist);
+            /* removed with the scratch directory */
         }
     }
 
