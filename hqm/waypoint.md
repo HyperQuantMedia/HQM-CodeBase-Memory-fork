@@ -395,6 +395,19 @@ suite as evidence that a visual change works.
     mirror*, so syncing the mirror widens it without changing a thing we hold: 478 before this
     sync, 547 after (478 + the 69 taken in). Both numbers were true, four minutes apart. The
     command is `git rev-list --count HQM-dev..origin/vanilla-upstream`.
+- **CI/CD IS OFF AT THE REPOSITORY LEVEL** as of 2026-07-31 — `actions/permissions` is
+  `{"enabled": false}`, so nothing registers and nothing fires whatever the workflow files say.
+  This replaced per-workflow whack-a-mole: `gh workflow disable` needs an id, ids only exist
+  after lazy registration, and a newly registered workflow **defaults to enabled** — pushing
+  `HQM-dev` registered `soak.yml` as `active` with no warning. **A release cut therefore needs
+  two deliberate acts**, and re-enabling the repo does NOT re-enable individual workflows:
+  ```bash
+  echo '{"enabled":true}' | gh api -X PUT     repos/HyperQuantMedia/HQM-CodeBase-Memory-fork/actions/permissions --input -
+  gh workflow enable release.yml --repo HyperQuantMedia/HQM-CodeBase-Memory-fork
+  # ...cut the release, then turn the repository setting back off
+  ```
+  The API reads stale — a successful `PUT` returns 204 and the next GETs may still say `true`.
+  Full record: [`decisions/2026-07-31-actions-off-at-the-repo-level.md`](decisions/2026-07-31-actions-off-at-the-repo-level.md).
 - **CI is mostly dark** (owner order). Build and validate locally. Verify the real state
   rather than trusting this list — `gh workflow list --all --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
   As of 2026-07-30: `disabled_manually` = CodeQL SAST, DCO, Deploy Pages, Release, OpenSSF

@@ -64,6 +64,9 @@ static void test_rmdir_r(const char *path) {
     th_rmtree(path);
 }
 
+#if CBM_ENABLE_SELF_UPDATE
+/* Fixture for the gated extraction tests below; unused without them, and an
+ * unused static is a -Werror failure. */
 /* Helper: create tar.gz with a single file */
 static unsigned char *create_test_targz(const char *filename, const unsigned char *content,
                                         int content_len, int *out_len) {
@@ -134,6 +137,7 @@ static unsigned char *create_test_targz(const char *filename, const unsigned cha
     free(tar);
     return gz;
 }
+#endif /* CBM_ENABLE_SELF_UPDATE */
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Version comparison tests (port of selfupdate_test.go)
