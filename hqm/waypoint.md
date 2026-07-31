@@ -216,26 +216,59 @@ suite as evidence that a visual change works.
   | Branch | Job |
   |---|---|
   | `vanilla-upstream` | vanilla drops. Mirror only, never checked out, holds no HQM code |
-  | `Merged` | **integration.** Upstream lands *here first*; merge conflicts and fallout are fixed *here* |
+  | `Merged` | **integration, long-lived.** Where conflicts between vanilla and `HQM-dev` are resolved. Upstream lands here first; its fallout is fixed here |
   | `HQM-dev` | our development work, protected from raw upstream churn |
-  | `main` | our own independent version, cut from `HQM-dev`. Repo default |
+  | `main` | our own independent version, cut from `HQM-dev`. Repo default, and **where all CI/CD version cuts run** |
 
   **Flow: `vanilla-upstream` → `Merged` (merge, fix, verify) → `HQM-dev` (after greenlight and
   stability feedback) → `main` (version cut).** Never a direct commit on `main`.
 
-  **So containment runs the opposite way from a normal release chain: `main` ⊆ `HQM-dev` ⊆
-  `Merged`.** `Merged` is the *most* advanced branch, not the least — it carries upstream work our
-  own line has not accepted yet. An earlier version of this file said "promotion is HQM-dev →
-  Merged → main", which had it backwards and made `Merged` look like a staging area for our work
-  instead of a quarantine for theirs.
+  An earlier version of this file said "promotion is HQM-dev → Merged → main", which had it
+  backwards and made `Merged` look like a staging area for our work instead of the place foreign
+  code is absorbed.
 
-  **Bring `Merged` up to `HQM-dev` before each upstream take.** `Merged` is not a long-lived
-  divergent branch; it is a landing strip. Merging upstream into a stale `Merged` integrates
-  against a base that lacks our current work, and the fallout then surfaces at the
-  `Merged → HQM-dev` step where it is far harder to attribute. Live example: on 2026-07-31
-  `Merged` sat **20 commits behind** `HQM-dev`, so the missed-graph merge would have been
-  integrated against a tree with no spacing probe, no light-stage render model and no size-map
-  parity — and the four light-theme defects the port carried would have been invisible.
+  **`Merged` is long-lived and never rewritten.** Not a scratch branch, not recreated per cycle:
+  **its history *is* the record of how every vanilla↔HQM-dev conflict was resolved**, and that
+  ancestry is what stops the next pull re-conflicting the same hunks. So:
+
+  - **Never `git branch -f`, `git reset --hard`, or delete-and-recreate `Merged`.** That throws
+    away resolutions and puts git back to blind. (The 2026-07-31 fast-forward was safe *only*
+    because `Merged` was already an ancestor of `HQM-dev` — nothing existed to lose. Check that
+    before ever moving it that way again; if `git rev-list --count HQM-dev..Merged` is non-zero,
+    a force-move destroys work.)
+  - **Bring our work in by merging `HQM-dev` into `Merged`, before taking a vanilla range.**
+    Conflicts must be resolved against *current* work. On 2026-07-31 `Merged` sat 20 commits
+    behind, so a merge into it as-found would have integrated the missed graph against a tree with
+    no spacing probe, no light-stage render model and no size-map parity — and the four
+    light-theme defects the port carried would have been invisible until the `Merged → HQM-dev`
+    step, where attribution is far harder.
+
+  **Containment is a cycle, not a constant.** Between a take and its greenlight, `Merged` is
+  *ahead* of `HQM-dev` — it holds resolutions our line has not accepted yet, which is the whole
+  point of the quarantine. After greenlight, `HQM-dev` contains `Merged`, and `main` contains
+  whatever was cut. What must hold at all times is only this: **nothing reaches `main` except a
+  cut from `HQM-dev`**, and nothing is committed directly on `main`. Check the live state rather
+  than assuming a fixed ordering:
+
+  ```
+  git rev-list --count HQM-dev..Merged     # >0 = a take is in flight, not yet greenlit
+  git rev-list --count HQM-dev..main       # must be 0
+  git merge-base --is-ancestor main HQM-dev
+  ```
+
+  **All CI/CD version cuts run from `main`** (owner, 2026-07-31). A release is a cut from
+  `HQM-dev` to `main`, then the release workflow dispatched **on `main`** — which is also the only
+  branch Actions reads workflows, crons and dispatch definitions from, so the two facts are the
+  same fact. Consequences worth holding on to:
+
+  - **A release dispatched from any other branch is the wrong branch by definition.** The existing
+    `v0.9.0-hqm-v0.1.0` draft was dispatched from `HQM-dev` on 2026-07-29 and failed after 2h16m
+    (run `30495762643`); under this rule it was mis-aimed as well as unverified. The plan deletes it.
+  - **`main` must be pushed before a cut can run**, and Release is currently `disabled_manually`
+    along with most of the rest — so a version cut needs `gh workflow enable release.yml` as a
+    deliberate act, not a surprise.
+  - Local `--with-ui` builds stay the verification step regardless. CI cuts the version; it is not
+    what tells us the tree is good.
 - **Syncing `vanilla-upstream`:** `hqm/scripts/sync-vanilla.sh` (report only) then
   `--push`. Never checked out — the push is a refspec from the fetched upstream ref, so no
   local branch exists to drift. It **refuses** when the incoming range adds or renames a file
