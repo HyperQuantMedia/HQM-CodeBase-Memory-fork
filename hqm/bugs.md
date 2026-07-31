@@ -270,6 +270,22 @@ this panel.
 **Repro:** switch to the light theme and compare a relationship chip's contrast against a node-type
 chip beside it.
 
+### B11 — Executable-stack fix applied but unproven on ELF output
+
+**Severity:** release-gating for any Linux artifact · **Status:** open until a Linux build runs
+the gate — owner's call on when, before any release
+
+Hardening item 1: `vendored/nomic/code_vectors_blob.S` (the only assembly in the build) lacked
+`.note.GNU-stack`, so GNU ld assumed the worst for the whole link — **every Linux binary ever
+shipped from this line had `GNU_STACK RWE`**. The fix is applied on `HQM-dev` (the section note
+plus ELF-only `-Wl,-z,noexecstack` behind the new `IS_LINUX` probe), but the gate's A1 assertion
+is ELF-only and reports `n/a` on a PE build — so on this machine the fix is present in source and
+**machine-unproven in the artifact**. The other seven items do not share this gap; they are gate-
+verified on the PE build and closed below.
+
+**What closes it:** one Linux build, then
+`scripts/ci/check-binary-composition.sh` showing A1 `PASS` (no `GNU_STACK RWE`).
+
 ---
 
 ## Closed this cycle
@@ -284,3 +300,24 @@ Fixed and verified by test; visual confirmation still rolled up in **B1**.
 | — | Size-map scene never framed; read as broken camera controls | this cycle |
 | — | Kind chips filtered the 3D scene only; treemap ignored them and folder sums disagreed | this cycle, `SizeTab.test.tsx` |
 | — | File tile absorbed its click and did nothing | this cycle |
+
+### The hardening wave — seven of eight closed 2026-07-31
+
+Inherited security defects, hand-applied to `HQM-dev` (`6ffaf719` items 1–4/6/7, `dbd7add7`
+items 5+8) because upstream's own fixes edit `src/daemon/application.c`, which our base does not
+have — cherry-picking was impossible. Ruling and per-item provenance:
+[`decisions/2026-07-31-hardening-and-self-update.md`](decisions/2026-07-31-hardening-and-self-update.md).
+Verification is against the **built artifact**, never source review:
+`scripts/ci/check-binary-composition.sh` returned **`BINARY COMPOSITION OK: 12 assertions
+passed`** on the default build. Item 1 is NOT in this table — it is **B11** above, open until a
+Linux build proves it.
+
+| # | Defect | Verification |
+|---|---|---|
+| 2 | Update check phoned home to DeusData's releases from every shipped binary (`mcp.c:6620`) | gate A3 — all four updater needles absent |
+| 3 | Self-update was a download→decompress→`chmod +x` dropper composite, pointed at DeusData so `update` replaced Cartograph with vanilla | gated behind `CBM_ENABLE_SELF_UPDATE` (default 0) and repointed at HQM releases; default build A3-clean, and the ON position **builds** (`build-selfupdate-on.log`) with the gate then failing exactly the two A3 URL assertions — flag and gate both proven |
+| 4 | SQLite extension loading compiled in with no caller | gate A4 — both symbols absent, `OMIT_LOAD_EXTENSION` present |
+| 5 | Predictable shared temp paths (`mcp.c` search scratch, `artifact.c`, `diagnostics.c`) | no gate assertion exists for behaviour; `cbm_mkdtemp`/`cbm_mkstemp` private-dir pattern applied, written through descriptors, build + suites green |
+| 6 | `pass_envscan.c` descended symlinks out of the project root; 512-byte buffers truncated into pointer arithmetic | suite green; needed `compat_fs.{c,h}` + `win_utf8.h` foundations |
+| 7 | `__DATE__`/`__TIME__` in mimalloc + linker timestamp made identical source unreproducible | `-Wdate-time`, `-Wl,--no-insert-timestamp`, mimalloc stamp dropped |
+| 8 | Nothing verified the shipped artifact's composition at all | the gate itself, wired into `scripts/build.sh` on every local build (`CBM_SKIP_COMPOSITION_GATE=1` opts out); canary A0 proves the needle scan reads the file |

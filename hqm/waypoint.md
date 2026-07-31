@@ -15,7 +15,7 @@ Updated: 2026-07-31 · Focus set by: Rahul
 |---|---|---|---|
 | `vanilla-upstream` | — | **`d698db8e`** | pushed; level with DeusData, 0 behind |
 | `Merged` | **`500ac1ce`** | `56c2feb9` | full 547-commit take, **QUARANTINED — do not greenlight** |
-| `HQM-dev` | `94498621` **+ uncommitted hardening** | `2be1a469` | green, no daemon |
+| `HQM-dev` | `71a67050` — hardening wave committed | `2be1a469` | green, no daemon |
 | `main` | `94498621` | `56c2feb9` | cut from HQM-dev |
 
 **Why `Merged` is quarantined:** the merged binary does not run. `list_projects`,
@@ -79,16 +79,25 @@ comes up. Phases 3 and 4 are unaffected — they are entirely our own surfaces.
    **A1 is ELF-only and reported `n/a` on this PE build — item 1 still needs a Linux build to
    prove.** Rerun the gate with:
    `bash scripts/ci/check-binary-composition.sh --variant=ui build/c/codebase-memory-mcp.exe`
-2. **Build once with `-DCBM_ENABLE_SELF_UPDATE=1`.** A flag that only compiles in the off
-   position is a deletion wearing a flag's clothes. NOT yet done.
-3. **Item 5's `mcp.c` half** — `cbm_search_<pid>.pat` and its `.files` companion. Upstream's
-   pattern: a `cbm_mkdtemp` private dir (0700 / owner-only DACL) with files created by
-   `cbm_mkstemp` (`O_CREAT|O_EXCL`, 0600), written through the returned descriptor, never
-   reopened by name. Reference: `git show Merged:src/mcp/mcp.c`, `search_scratch_open`.
-   Both primitives already exist here.
-4. **Wire item 8** into `package-release.sh` (upstream calls it at two sites) and the local
-   build path.
-5. **Both suites** (UI first — `scripts/test.sh` deletes `graph-ui/node_modules`).
+2. ~~Build once with `-DCBM_ENABLE_SELF_UPDATE=1`.~~ **DONE** — `build-selfupdate-on.sh`
+   compiled and linked clean (`Built with UI`), and the gate failed on exactly the two
+   A3 URL assertions (`releases/latest`, `releases/latest/download`) and nothing else —
+   which is the flag working in both positions AND the gate proving it can detect the
+   updater when present. Log: `scratchpad/c-suite/build-selfupdate-on.log` (`EXIT=2`,
+   expected). **Consequence: `build/c/` now holds the self-update-ON artifact — rebuild
+   OFF before serving or releasing anything from this tree.**
+3. ~~Item 5's `mcp.c` half.~~ **DONE** in `dbd7add7` — `search_scratch_open`/`search_scratch_close`
+   over a `cbm_mkdtemp` private dir, files via `cbm_mkstemp`, written through the descriptor
+   (see the item-5 row in the table above).
+4. ~~Wire item 8.~~ **DONE** in `dbd7add7` — wired into `scripts/build.sh` (no
+   `package-release.sh` on this branch); runs on every local build,
+   `CBM_SKIP_COMPOSITION_GATE=1` opts out.
+5. ~~Both suites.~~ **DONE 2026-07-31 late, both green on the post-hardening tree at
+   `71a67050`:** UI `npm ci` + build + vitest — **260/260, 28 files**; C suite —
+   **`EXIT=0`, 5767 passed / 0 failed / 18 skipped, "All tests passed"**, log
+   `scratchpad/c-suite/run.log`. (Wrapper trap discovered: invoking the script as
+   `bash -lc <path> <log-name>` puts the log-name in `$0`, not `$1` — the log falls
+   back to `run.log`. Pass the name inside the `-lc` string if it matters.)
 6. **A Linux build**, the only way to prove item 1 (A1 is ELF-only).
 
 ### Traps that cost real time today — do not rediscover
