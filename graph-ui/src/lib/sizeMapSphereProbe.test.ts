@@ -136,7 +136,7 @@ describe("the injected quantile reaches the real layout", () => {
         drawnRadius,
         quantile,
       ).map((n) => [n.x, n.y, n.z]);
-    expect(place()).toEqual(place(0.7));
+    expect(place()).toEqual(place(0.85));
   });
 });
 
@@ -219,17 +219,18 @@ describe("recommendQuantile", () => {
     ).toBeNull();
   });
 
-  /* Ties break toward density because the failure the owner overturned was an empty
-   * scene, not a crowded one. */
-  it("prefers the denser of two acceptable notches", () => {
+  /* Ties break toward the sparse end since 2026-08-01: the owner ruled the dense
+   * pick (0.70, ~21% overlapping) too crowded by eye. The empty-starfield failure
+   * is guarded by the band's floor, not by the tie-break. */
+  it("prefers the sparser of two acceptable notches", () => {
     expect(
       recommendQuantile([
-        m("sphere", 0.7, 22),
-        m("cone", 0.7, 20),
+        m("sphere", 0.7, 16),
+        m("cone", 0.7, 14),
         m("sphere", 0.9, 8),
         m("cone", 0.9, 7),
       ]),
-    ).toBe(0.7);
+    ).toBe(0.9);
   });
 
   it("returns null when nothing lands in the band", () => {

@@ -356,7 +356,7 @@ const SIZE_SPACING_K = 2.6;
  * the repository. `sizeMapSphereProbe.ts` now regenerates it from a seeded corpus, so
  * the trade curve is reproducible rather than remembered — which is why the quantile
  * is an injectable argument below and not only this constant. */
-export const RADII_FIT_QUANTILE = 0.7;
+export const RADII_FIT_QUANTILE = 0.85;
 
 /* Clear space demanded between two surfaces, in median radii. Touching spheres
  * read as one object, so a gap is not cosmetic. */

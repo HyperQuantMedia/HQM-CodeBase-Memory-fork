@@ -56,11 +56,14 @@ export const CALIBRATION = {
   overlappingPct: 57,
   /** Median clearance there, in median radii. Negative: typical pair overlaps. */
   clearanceInRadii: -0.32,
-  /** Upper bound for a size view: denser than this and bytes stop being readable. */
-  maxOverlappingPct: 25,
+  /** Upper bound for a size view: denser than this and bytes stop being readable.
+   * Was 25 — the owner looked at 0.70 (~21–22% overlapping on the real corpus) in the
+   * 2026-08-01 B1 pass and ruled it too crowded, so the ceiling now sits below the
+   * density his eye rejected. */
+  maxOverlappingPct: 18,
   /** Lower bound: sparser than this and the scene is the empty starfield again. */
   minOverlappingPct: 5,
-  measured: "2026-07-30, approved relationship graph, 47k nodes",
+  measured: "2026-07-30, approved relationship graph, 47k nodes; ceiling recalibrated 2026-08-01 by owner eye",
 } as const;
 
 /* Past this, a delegated run stops being something the user can be left to
@@ -71,10 +74,11 @@ export const NOTIFY_AFTER_MS = 2000;
  * half of that leaves the host room to render between slices. */
 export const DEFAULT_SLICE_MS = 8;
 
-/* The dial notches worth measuring. 0.70 is the shipped value and is always
- * included, so every sweep carries its own control. */
+/* The dial notches worth measuring. The shipped value (0.85 since the 2026-08-01
+ * recalibration) sits in the list, so every sweep carries its own control; 0.70
+ * stays as a notch so the rejected value remains visible in every report. */
 export const SWEEP_QUANTILES = [
-  0.55, 0.6, 0.65, RADII_FIT_QUANTILE, 0.75, 0.8, 0.85, 0.9, 0.98,
+  0.55, 0.6, 0.65, 0.7, 0.75, 0.8, RADII_FIT_QUANTILE, 0.9, 0.98,
 ] as const;
 
 export const PROBE_VIEWS: Exclude<ViewMode, "default">[] = [
@@ -481,12 +485,14 @@ export interface SphereProbeReport {
   aborted?: boolean;
 }
 
-/* Pick the notch whose *worst* view still reads, then break ties toward density.
+/* Pick the notch whose *worst* view still reads, then break ties toward the sparse end.
  *
  * Worst view rather than mean: the dial is one control shared by three projections
  * (the parity ruling), so a value that only works in `sphere` is not a value. Ties
- * break toward the denser end because the failure the owner actually overturned was
- * an empty scene, not a crowded one. */
+ * broke toward the denser end until 2026-08-01, when the owner ruled the dense pick
+ * (0.70, ~21% overlapping) too crowded by eye — the failure being corrected today is
+ * a crowded scene. The empty-starfield failure lives below the band's floor, and the
+ * floor is what guards it, not the tie-break. */
 export function recommendQuantile(
   measurements: SphereProbeMeasurement[],
 ): number | null {
@@ -502,7 +508,7 @@ export function recommendQuantile(
     if (!list.every((m) => m.withinBand)) continue;
     /* Worst = the most crowded view at this notch. */
     const worst = Math.max(...list.map((m) => m.overlappingPct));
-    if (best === null || worst > best.worst) best = { quantile, worst };
+    if (best === null || worst < best.worst) best = { quantile, worst };
   }
   return best?.quantile ?? null;
 }
