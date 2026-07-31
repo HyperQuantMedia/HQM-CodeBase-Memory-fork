@@ -26,9 +26,15 @@ any upstream work at all**.
 | Overlap | **19 files** of 93 ours / 350 theirs |
 | Dry-merge of all 488 | 11 conflicts |
 
-Upstream has **cut no release since `v0.9.0`**, so every one of those 488 commits is unreleased
-work. That is the fact the whole ruling turns on: we are not behind on *releases*, we are behind on
-someone's in-flight `main`.
+Upstream has **cut no non-prerelease tag since `v0.9.0`**, so every one of those 488 commits is
+unreleased work. That is the fact the whole ruling turns on: we are not behind on *releases*, we are
+behind on someone's in-flight `main`.
+
+*(Tightened 2026-07-31: this said "cut no release". A tag **`v0.9.1-rc.1`** does exist — `560ad40d`,
+2026-07-29 — reachable from `vanilla-upstream`, absent from `HQM-dev`. It is a release candidate, so
+the version-axis rule below is not triggered by it. It is also the build DeusData **#1351** reports
+as leaving Windows cache files unreadable, which puts a tag number on the daemon deferral's
+evidence.)*
 
 ## Why the daemon is refused, for now
 

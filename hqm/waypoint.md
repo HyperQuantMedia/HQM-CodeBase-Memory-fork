@@ -275,7 +275,21 @@ suite as evidence that a visual change works.
   under `.github/workflows/`, and refuses when the branch is not an ancestor of
   `upstream/main`. `--setup` is the one-time local config. Ruling and the rejected
   alternatives: [`decisions/2026-07-31-vanilla-sync.md`](decisions/2026-07-31-vanilla-sync.md).
-  Last synced 2026-07-31: `7dd8d220 → a65faeb4`, 23 commits, no run created.
+  - Synced 2026-07-31: `7dd8d220 → a65faeb4`, 23 commits, no run created.
+  - Synced again 2026-07-31: `a65faeb4 → d698db8e`, **69 commits, and the gate refused** — the range
+    adds `pr-acknowledgement.yml`. Owner overrode it; the push was done by hand, because the script
+    has no `--force` on purpose. `on: pull_request_target: [opened]`, zero push triggers, and
+    `pull_request_target` reads its workflow from a PR's *base* branch — so it is inert on a branch
+    that is never a base. Verified after: **no run created, registry still 9, the new file still
+    unregistered.** It goes live only if it reaches `main`, which is now the CI/CD branch, so that
+    is when to decide whether this fork wants PR auto-comments at all. Full record:
+    [`decisions/2026-07-31-first-workflow-gate-override.md`](decisions/2026-07-31-first-workflow-gate-override.md).
+  - **`vanilla-upstream` is level with DeusData as of 2026-07-31** — `d698db8e`, 0 behind, 0 ahead.
+    Our own line sits **547 commits behind the mirror**, and that is the ruling, not neglect.
+  - **Re-measure that number after every sync; never carry it over.** It is measured *against the
+    mirror*, so syncing the mirror widens it without changing a thing we hold: 478 before this
+    sync, 547 after (478 + the 69 taken in). Both numbers were true, four minutes apart. The
+    command is `git rev-list --count HQM-dev..origin/vanilla-upstream`.
 - **CI is mostly dark** (owner order). Build and validate locally. Verify the real state
   rather than trusting this list — `gh workflow list --all --repo HyperQuantMedia/HQM-CodeBase-Memory-fork`.
   As of 2026-07-30: `disabled_manually` = CodeQL SAST, DCO, Deploy Pages, Release, OpenSSF
