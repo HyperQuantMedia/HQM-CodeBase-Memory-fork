@@ -205,6 +205,53 @@ Two *real* defects were found in these files while chasing this, and both are fi
 `soak.yml` reference (`7825f288`) and `type: number` under `workflow_dispatch`, which is illegal —
 only `boolean`, `choice`, `environment`, `string` are (`dce7050c`).
 
+### B10 — Upstream's daemon never starts on Windows, so the merged tree is unusable
+
+**Severity:** blocking `Merged` entirely · **Status:** upstream's defect, **not ours to fix** —
+`Merged` is quarantined because of it
+
+Not a defect in our code, and recorded here because it is the single fact that decides what
+`Merged` is allowed to do. On the full-take tree, nothing stateful runs:
+
+```
+--version       ok            (stateless, bypasses the daemon)
+list_projects   CBM daemon could not start within 30000 ms
+daemon start    CBM daemon could not start within 30000 ms   (error exit)
+daemon status   daemon: not running
+--ui=true       no response at all
+```
+
+`main.c` routes every MCP session, hook and one-shot CLI command through
+`cbm_daemon_bootstrap_endpoint_new()`, so no CLI, no MCP, no UI.
+
+**Proven inherited, not caused by our merge.** A detached worktree at
+`origin/vanilla-upstream` — zero HQM code — was built and run on this machine and fails
+identically, same two messages, same error exit. The C suite agrees: **98 failures**, every one
+in the daemon/lock family, reproduced there suite-for-suite (`daemon_runtime` 33, `daemon_ipc`
+27, `version_cohort` 13, `daemon_bootstrap` 10, `private_file_lock` 6, `project_lock` 1).
+
+**The ACL layer is NOT the cause, despite appearances.** The runtime directory is created
+correctly with every lock file and a valid rendezvous record naming its pipe
+(`cbm-lifetime.lock`, `cbm-startup-v2.lock`, `cbm-rendezvous.lock`, four version-cohort locks).
+The failing *tests* pass an explicit temp-dir parent; production uses `LOCALAPPDATA` via
+`SHGetFolderPathW` and that path works. So the runtime defect is **later** than the one the tests
+exhibit — the daemon child never comes up or never serves — and it is a **different, more severe
+bug than upstream's open #1351**. Chasing the ACL layer would be chasing the wrong defect.
+
+Two dead ends already paid for: `TEMP`/`cbm_tmpdir` was asserted as the cause and disproved by
+testing three values (`/tmp`, `C:\msys64\tmp`, a real user temp — identical failure); and
+`win_private_directory_tree_secure`'s drive-absolute check is a real mechanism that is not the
+one firing.
+
+**Repro:** build any tree containing `src/daemon/` and run `list_projects`.
+`scratchpad/c-suite/build-vanilla-binary.sh` builds the pure-upstream comparison.
+
+**What would close it:** upstream tagging a release whose daemon starts on Windows. That is the
+revisit condition in
+[`decisions/2026-07-31-stay-on-the-v0.9.0-line.md`](decisions/2026-07-31-stay-on-the-v0.9.0-line.md)
+— a behaviour test, not a version number, because `v0.9.1-rc.1` is newer and changes nothing
+(prerelease, contains all 24 daemon files, and is the build #1351 reports broken).
+
 ### B9 — Relationship chips use an opacity modifier, so they ignore the light stage
 
 **Severity:** low · **Status:** open, found 2026-07-31 while porting the missed graph

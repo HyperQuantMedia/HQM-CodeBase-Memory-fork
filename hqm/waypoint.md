@@ -45,6 +45,31 @@ home to DeusData, shipped the dropper composite, and had `GNU_STACK RWE` on ever
 loses nothing. It is *not* a finished cycle: items 5 and 8 are incomplete, so do not cut a
 release from this state.
 
+### Owner's B1 visual pass — next session, and it still gates Phase 3
+
+The owner runs the visual verification himself in the next session. Serve the current build
+first (`scratchpad/c-suite/build-with-ui.sh <version>`, then start the binary with
+`--ui=true --port=9749`) and **confirm the served bundle hash changed** before believing
+anything shipped:
+
+```
+curl -s http://127.0.0.1:9749/ | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js'
+```
+
+Surfaces are listed in [`bugs.md`](bugs.md) B1. **Two things are newer than that list** and have
+never been seen on screen: the size view's footer `spacing 0.70` readout, and the `measure`
+link that runs the delegated probe (with its "still measuring" notice past 2 s).
+
+Phase 3 is the parity sweep and touches those same surfaces, so starting it before the pass
+moves the target — the exact pattern that cost four rounds in the usability arc.
+
+### One plan dependency changed — Phase 5's A16
+
+Phase 1's *feature* (the missed-graph coverage backend) is on `Merged`, quarantined with the
+daemon. **It never reached `HQM-dev`.** The plan assumed Phase 1 "lands the coverage backend
+Phase 5 surfaces (A16)", so A16 has no data source on our line and needs rescoping when Phase 5
+comes up. Phases 3 and 4 are unaffected — they are entirely our own surfaces.
+
 ### Next actions, in order
 
 1. ~~Build + gate.~~ **DONE**: `hard4` built `EXIT=0` / 0 errors, and the gate returned
