@@ -844,10 +844,13 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
                   aria-label="Open the size map"
                   title="Same corpus, measured in bytes"
                 >
-                  {/* The tab's own glyph, not the word: the two views cross-link to
-                      each other constantly, and a button that shows where it goes
-                      beats one that names it. Same icon as the header tab. */}
-                  <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
+                  {/* B14 (owner, 2026-08-01): the bare glyph failed discovery — the
+                      word carries the destination, the glyph stays as the tab's
+                      signature. Mirrored on the size tab's Graph button. */}
+                  <span className="flex items-center gap-1.5">
+                    <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
+                    <span className="text-[11px]">Size map</span>
+                  </span>
                 </Button>
               )}
               <Button

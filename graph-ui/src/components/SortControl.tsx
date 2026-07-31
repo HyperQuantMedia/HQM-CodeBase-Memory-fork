@@ -1,4 +1,11 @@
-import { ArrowDown01, ArrowDownAZ, ArrowUp01, ArrowUpAZ } from "lucide-react";
+import {
+  ArrowDown01,
+  ArrowDownAZ,
+  ArrowDownWideNarrow,
+  ArrowUp01,
+  ArrowUpAZ,
+  ArrowUpNarrowWide,
+} from "lucide-react";
 import {
   nextSort,
   sortActionLabel,
@@ -11,28 +18,42 @@ interface SortControlProps {
   listName: string;
   order: SortOrder;
   onChange: (next: SortOrder) => void;
+  /** Which sort keys this list offers. Defaults to the filter-chip pair. */
+  keys?: SortKey[];
   className?: string;
 }
 
-/* Two buttons, one per sort key, each carrying its own direction in its glyph:
- * A↓Z / Z↓A for names, 0↓1 / 1↓0 for counts. The active key is lit.
+/* One button per sort key, each carrying its own direction in its glyph:
+ * A↓Z / Z↓A for names, 0↓1 / 1↓0 for counts, wide↓narrow for sizes. The active
+ * key is lit.
  *
- * Two buttons rather than one cycling through four states: a single control would
- * make "sort by name" and "reverse" the same gesture, so getting from
+ * One button per key rather than one cycling through all states: a single control
+ * would make "sort by name" and "reverse" the same gesture, so getting from
  * count-descending to A–Z would take an unknown number of clicks. Here the key is
  * the button and the direction is the repeat click. */
-export function SortControl({ listName, order, onChange, className = "" }: SortControlProps) {
-  const keys: { key: SortKey; Icon: typeof ArrowDownAZ }[] = [
-    {
-      key: "name",
+export function SortControl({
+  listName,
+  order,
+  onChange,
+  keys: keyList = ["name", "count"],
+  className = "",
+}: SortControlProps) {
+  const iconFor = (key: SortKey): typeof ArrowDownAZ => {
+    const activeAsc = order.key === key && order.dir === "asc";
+    const activeDesc = order.key === key && order.dir === "desc";
+    if (key === "name") {
       /* The arrow shows the direction a click *produces*, matching the label. */
-      Icon: order.key === "name" && order.dir === "desc" ? ArrowUpAZ : ArrowDownAZ,
-    },
-    {
-      key: "count",
-      Icon: order.key === "count" && order.dir === "asc" ? ArrowUp01 : ArrowDown01,
-    },
-  ];
+      return activeDesc ? ArrowUpAZ : ArrowDownAZ;
+    }
+    if (key === "size") {
+      return activeAsc ? ArrowUpNarrowWide : ArrowDownWideNarrow;
+    }
+    return activeAsc ? ArrowUp01 : ArrowDown01;
+  };
+  const keys: { key: SortKey; Icon: typeof ArrowDownAZ }[] = keyList.map((key) => ({
+    key,
+    Icon: iconFor(key),
+  }));
 
   return (
     <div className={`flex items-center gap-0.5 ${className}`}>

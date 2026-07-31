@@ -786,32 +786,37 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
               )}
             </Button>
-            {view !== "treemap" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  updateViewSettings({
-                    ...viewSettings,
-                    autoRotate: viewSettings.autoRotate === "on" ? "off" : "on",
-                  })
-                }
-                aria-label={
-                  viewSettings.autoRotate === "on" ? "Stop auto-rotate" : "Start auto-rotate"
-                }
-                title={
-                  viewSettings.autoRotate === "on"
+            {/* B13 (owner ruling 2026-08-01): cycling views must not make controls
+                appear and disappear — the rail is stable across all four views.
+                The treemap is DOM with no camera, so orbit is disabled there, not
+                hidden. */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={view === "treemap"}
+              onClick={() =>
+                updateViewSettings({
+                  ...viewSettings,
+                  autoRotate: viewSettings.autoRotate === "on" ? "off" : "on",
+                })
+              }
+              aria-label={
+                viewSettings.autoRotate === "on" ? "Stop auto-rotate" : "Start auto-rotate"
+              }
+              title={
+                view === "treemap"
+                  ? "The treemap has no camera to orbit"
+                  : viewSettings.autoRotate === "on"
                     ? "Stop the camera orbit"
                     : "Start the camera orbit"
-                }
-              >
-                {viewSettings.autoRotate === "on" ? "❚❚" : "▶"}
-              </Button>
-            )}
-            {/* Scene settings + per-theme appearance, only where there is a scene to
-                settle. The treemap is DOM, so fov and bloom have nothing to act on. */}
-            {view !== "treemap" && (
-              <SettingsMenu
+              }
+            >
+              {viewSettings.autoRotate === "on" ? "❚❚" : "▶"}
+            </Button>
+            {/* Scene settings + per-theme appearance. Rendered on the treemap too
+                (B13): fov and bloom act on the next 3D view, and a menu that only
+                exists sometimes reads as a bug. */}
+            <SettingsMenu
                 stage={stage}
                 appearance={appearance}
                 onAppearanceChange={updateAppearance}
@@ -822,9 +827,8 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                    colorForLabel(), and this view colours by file *kind* out of
                    KIND_COLORS. Feeding it kind names would render swatches that
                    change nothing. Logged in hqm/backlog.md. */
-                labels={[]}
-              />
-            )}
+              labels={[]}
+            />
             {onOpenGraph && (
               <Button
                 variant="outline"
@@ -833,7 +837,13 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 aria-label="Open the relationship graph"
                 title="Same corpus, measured in relationships"
               >
-                <GraphTabIcon />
+                {/* B14: the bare glyph read as a share icon — the owner hunted for
+                    this exact button and could not find it. The word carries the
+                    destination; the glyph stays as the tab's signature. */}
+                <span className="flex items-center gap-1.5">
+                  <GraphTabIcon />
+                  <span className="text-[11px]">Graph</span>
+                </span>
               </Button>
             )}
           </div>

@@ -11,7 +11,11 @@
  * are read for different reasons in the same glance, and pinning them together
  * means one of the two is always in the wrong order. */
 
-export type SortKey = "name" | "count";
+/* "count" is how many of a type there are (filter chips); "size" is bytes and
+ * "files" is file-count — the size tree's two different questions, which shared
+ * one mislabelled button until the owner caught it (B12, 2026-08-01): the button
+ * said count and sorted bytes. A control that lies is worse than two controls. */
+export type SortKey = "name" | "count" | "size" | "files";
 export type SortDir = "asc" | "desc";
 
 export interface SortOrder {
@@ -26,7 +30,12 @@ export const DEFAULT_SORT: SortOrder = { key: "count", dir: "desc" };
 /* Each key's natural first direction. Alphabetical opens at A–Z; counts open at
  * largest-first, because "what is there most of" is the question that made
  * someone click the count button. */
-const FIRST_DIR: Record<SortKey, SortDir> = { name: "asc", count: "desc" };
+const FIRST_DIR: Record<SortKey, SortDir> = {
+  name: "asc",
+  count: "desc",
+  size: "desc",
+  files: "desc",
+};
 
 /* Clicking the active key flips its direction; clicking the other key switches
  * to it at its own natural direction rather than inheriting the previous one —
@@ -70,7 +79,10 @@ export function loadSort(key: string, fallback: SortOrder = DEFAULT_SORT): SortO
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<SortOrder>;
     if (
-      (parsed.key === "name" || parsed.key === "count") &&
+      (parsed.key === "name" ||
+        parsed.key === "count" ||
+        parsed.key === "size" ||
+        parsed.key === "files") &&
       (parsed.dir === "asc" || parsed.dir === "desc")
     ) {
       return { key: parsed.key, dir: parsed.dir };
@@ -97,13 +109,25 @@ export function sortActionLabel(
   current: SortOrder,
 ): string {
   const next = nextSort(current, key);
+  const noun =
+    next.key === "name"
+      ? "name"
+      : next.key === "size"
+        ? "size"
+        : next.key === "files"
+          ? "file count"
+          : "count";
   const how =
     next.key === "name"
       ? next.dir === "asc"
         ? "A to Z"
         : "Z to A"
-      : next.dir === "asc"
-        ? "fewest first"
-        : "most first";
-  return `Sort ${listName} by ${next.key === "name" ? "name" : "count"}, ${how}`;
+      : next.key === "size"
+        ? next.dir === "asc"
+          ? "smallest first"
+          : "largest first"
+        : next.dir === "asc"
+          ? "fewest first"
+          : "most first";
+  return `Sort ${listName} by ${noun}, ${how}`;
 }

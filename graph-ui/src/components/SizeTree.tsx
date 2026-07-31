@@ -71,7 +71,14 @@ function TreeRow({
   const isFolder = node.children.length > 0;
   const selected = isFolder ? focus === node.path : pickedPath === node.path;
   const children = useMemo(
-    () => sortByOrder(node.children, (c) => c.name, (c) => c.bytes, order),
+    () =>
+      sortByOrder(
+        node.children,
+        (c) => c.name,
+        /* B12: size and file-count are two different questions, two keys. */
+        (c) => (order.key === "files" ? c.fileCount : c.bytes),
+        order,
+      ),
     [node.children, order],
   );
 
@@ -145,10 +152,14 @@ export function SizeTree({
   project,
 }: SizeTreeProps) {
   const [search, setSearch] = useState("");
-  /* Bytes-descending by default — the shared DEFAULT_SORT. "What is big in here" is
-   * the question this panel is opened for, and it mirrors the graph tree opening on
-   * count-descending; `count` is the magnitude field either way. */
-  const [order, setOrder] = useState<SortOrder>(() => loadSort("cbm-sort-size-tree"));
+  /* Size-descending by default — "what is big in here" is the question this panel
+   * is opened for. This list's keys are name/size/files (B12: the old single
+   * "count" button sorted bytes while saying count); a stored legacy "count"
+   * order migrates to "size", which is what it always actually did. */
+  const [order, setOrder] = useState<SortOrder>(() => {
+    const loaded = loadSort("cbm-sort-size-tree", { key: "size", dir: "desc" });
+    return loaded.key === "count" ? { key: "size", dir: loaded.dir } : loaded;
+  });
   const [scope, setScope] = useState<ScopeKind | null>(null);
 
   const changeOrder = useCallback((next: SortOrder) => {
@@ -161,7 +172,14 @@ export function SizeTree({
 
   const topLevel = useMemo(
     () =>
-      root ? sortByOrder(root.children, (c) => c.name, (c) => c.bytes, order) : [],
+      root
+        ? sortByOrder(
+            root.children,
+            (c) => c.name,
+            (c) => (order.key === "files" ? c.fileCount : c.bytes),
+            order,
+          )
+        : [],
     [root, order],
   );
 
@@ -177,7 +195,7 @@ export function SizeTree({
     });
     /* Heaviest first — a substring search over a size map is still a size question. */
     const ranked = sortByOrder(matched, (n) => n.name, (n) => n.bytes, {
-      key: "count",
+      key: "size",
       dir: "desc",
     });
     return { rows: ranked.slice(0, SEARCH_LIMIT), total: ranked.length };
@@ -198,6 +216,7 @@ export function SizeTree({
           listName="this subtree"
           order={order}
           onChange={changeOrder}
+          keys={["name", "size", "files"]}
           className="shrink-0"
         />
         <div className="flex items-center gap-0.5 shrink-0">
