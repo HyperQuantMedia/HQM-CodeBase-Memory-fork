@@ -132,7 +132,7 @@ describe("collapsible sidebar panels", () => {
     expect(body).not.toBeNull();
   });
 
-  it("keeps collapsed Folders on the floor even with Filters collapsed too", async () => {
+  it("gathers collapsed sections at the top of the column (C7), Filters collapsed too", async () => {
     mockFetch();
     render(<GraphTab project="demo" />);
     await screen.findByText("Filters");
@@ -142,15 +142,14 @@ describe("collapsible sidebar panels", () => {
     const folders = screen
       .getByRole("button", { name: /Folders/ })
       .closest("[data-collapsible]")!;
-    /* Owner ruling: the collapsed strip is anchored to the bottom edge whatever
-     * its neighbour does. An earlier pass released it here on the grounds that
-     * two strips straddling an empty column looked worse — a metric of my own
-     * choosing, and overturned. A control that moves when an unrelated panel
-     * folds is a control you have to hunt for. */
-    expect(folders.className).toContain("mt-auto");
+    /* C7 (owner, v0.2.0 wanted-list): collapsed strips gather at the top-left
+     * corner. This supersedes the 2026-07-30 mt-auto ruling this test used to
+     * defend — both were the owner's calls; the newer one wins. If this
+     * assertion is ever flipped back, check whose call it was first. */
+    expect(folders.className).not.toContain("mt-auto");
   });
 
-  it("folds Folders down to the bottom of the column, not up under Filters", async () => {
+  it("keeps a collapsed Folders under Filters, not on the bottom edge (C7)", async () => {
     mockFetch();
     render(<GraphTab project="demo" />);
     const header = await screen.findByRole("button", { name: /Folders/ });
@@ -162,9 +161,9 @@ describe("collapsible sidebar panels", () => {
     const collapsed =
       screen.getByRole("button", { name: /Folders/ }).closest("[data-collapsible]") ??
       screen.getByRole("button", { name: /Folders/ }).parentElement!;
-    /* mt-auto is what pushes the flex column's free space above the strip, so a
-     * collapsed Folders lands on the bottom edge instead of riding up. */
-    expect(collapsed.className).toContain("mt-auto");
+    /* No mt-auto: the flex column's free space stays BELOW the strip, so the
+     * collapsed header sits in the corner with its neighbour (C7). */
+    expect(collapsed.className).not.toContain("mt-auto");
   });
 });
 

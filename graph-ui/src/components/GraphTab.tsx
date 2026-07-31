@@ -678,19 +678,15 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
               return !v;
             })
           }
-          /* `mt-auto` is what makes this fold *downward*: collapsed, the flex
-              column's free space is pushed above the header, so the strip lands on
-              the bottom edge instead of riding up under Filters.
-
-              Unconditional, by owner ruling. An earlier pass dropped it when
-              Filters was also collapsed, reasoning that two strips straddling an
-              empty column looked worse than two stacked at the top. That was my
-              metric, not the owner's: Folders belongs on the floor of the sidebar
-              and stays there whatever its neighbour does, because a control that
-              moves when an unrelated panel folds is a control you have to hunt
-              for. Do not re-derive this from how the empty space looks. */
+          /* C7 (owner, the v0.2.0 wanted-list): collapsed sections gather at the
+              top of the column — "collapse to the left corner, not top and
+              bottom". This SUPERSEDES the 2026-07-30 mt-auto ruling that anchored
+              a collapsed Folders to the floor; both were the owner's calls, this
+              one is newer, and the tests now assert this one. The ruling chain is
+              recorded so nobody re-derives either layout from how the empty
+              space looks. */
           className={
-            foldersOpen ? "flex-1 min-h-0" : "shrink-0 mt-auto border-t border-border/40"
+            foldersOpen ? "flex-1 min-h-0" : "shrink-0 border-t border-border/40"
           }
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">

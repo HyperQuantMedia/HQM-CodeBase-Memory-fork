@@ -183,8 +183,13 @@ export function FilterPanel({
                       key={label}
                       onClick={() => onToggleLabel(label)}
                       className={`inline-flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[10px] font-medium transition-all border ${
-                        on ? "border-border/60 bg-foreground/[0.04]" : "border-transparent opacity-25"
+                        on ? "" : "border-transparent opacity-25"
                       }`}
+                      /* Wanted-list item 4: the colour was already wired (dot +
+                         text) and did not read — a 5px dot and 10px tinted text
+                         desaturate to grey at chip size. The chip's own surface
+                         carries the colour now, same recipe as the schema pills. */
+                      style={on ? { backgroundColor: c + "20", borderColor: c + "50" } : undefined}
                     >
                       <span className="w-[5px] h-[5px] rounded-full" style={{ backgroundColor: on ? c : "#7b7b7b" }} />
                       <span style={{ color: on ? c : "#8a8a8a" }}>{label}</span>

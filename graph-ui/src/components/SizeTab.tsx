@@ -659,11 +659,11 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
               return !v;
             })
           }
-          /* `mt-auto` unconditionally — the same owner ruling as the graph tab's
-             Folders section. See GraphTab.tsx for why it does not depend on whether
-             Filters is open. */
+          /* C7 — collapsed sections gather at the top of the column, same as the
+             graph tab. See GraphTab.tsx for the ruling chain (this supersedes the
+             2026-07-30 mt-auto ruling). */
           className={
-            foldersOpen ? "flex-1 min-h-0" : "shrink-0 mt-auto border-t border-border/40"
+            foldersOpen ? "flex-1 min-h-0" : "shrink-0 border-t border-border/40"
           }
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
