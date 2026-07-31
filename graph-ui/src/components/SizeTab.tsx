@@ -959,10 +959,15 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
             tree too large to walk in full — listing stopped early
           </span>
         )}
+        {/* Which of the three "the index did not see this" states this total means —
+            state 2, presence. The graph tab's satellite cluster reports state 3, parse
+            coverage, and says "partly parsed" for exactly that reason: a partly-parsed
+            file IS in this indexed total. The states are named on `MissedGraph` in
+            lib/types.ts, and the two surfaces must never borrow each other's words. */}
         <span className="ml-auto">
           {source === "disk"
-            ? "Live from disk, excluding .git."
-            : "Indexed files only, as of the last index."}
+            ? "Live from disk, excluding .git. Presence, not parse coverage."
+            : "Files present in the index, as of the last index. Some may be only partly parsed — the graph tab shows which."}
         </span>
         {/* Hovering a tile is the treemap's cheap preview; the docked panel is the
             full answer for whatever was clicked. */}

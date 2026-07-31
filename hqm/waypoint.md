@@ -167,7 +167,7 @@ suite as evidence that a visual change works.
 ## Reference
 
 - **Build and run (two recipes that each cost real time to find):**
-  - C + UI: `MSYSTEM=CLANG64 /c/msys64/usr/bin/bash -lc 'export PATH="$PATH:/c/Program Files/nodejs"; cd /f/Git/HQM-CodeBase-Memory-fork && scripts/build.sh --with-ui --version v0.9.0-hqm-v0.1.0 CC=clang CXX=clang++'` — two traps: plain `bash -lc` picks Git Bash and fails with `compiler 'clang' not found in PATH`, and `MSYSTEM` must be set *before* the login shell starts (the shell reads it to configure the toolchain PATH), so exporting it inside `-lc` is too late. Node comes from the export because an MSYS login shell drops the Windows PATH.
+  - C + UI: `MSYSTEM=CLANG64 /c/msys64/usr/bin/bash -lc 'export PATH="$PATH:/c/Program Files/nodejs:/c/Program Files/Git/cmd"; cd /f/Git/HQM-CodeBase-Memory-fork && scripts/build.sh --with-ui --version v0.9.0-hqm-v0.1.0 CC=clang CXX=clang++'` — three traps: plain `bash -lc` picks Git Bash and fails with `compiler 'clang' not found in PATH`; `MSYSTEM` must be set *before* the login shell starts (the shell reads it to configure the toolchain PATH), so exporting it inside `-lc` is too late; and an MSYS login shell drops the Windows PATH, so **both `nodejs` and `Git/cmd` have to be exported back**. Node's absence fails loudly. **Git's absence fails as 23 test failures** — see the test-invocation note below.
   - UI only: `cd graph-ui && npm run build && npm run test`.
   - **Stop the server before relinking** — Windows holds the binary open and `ld.lld` fails.
     `Stop-Process` by name, rebuild, then restart.
@@ -180,6 +180,21 @@ suite as evidence that a visual change works.
 - **Test invocation:** `npx vitest run`. `--reporter=basic` was removed in vitest 4 and errors
   out; the default reporter is fine. Vitest 4 also swallows `console.log` under `run`, so the
   probe rigs write a report file instead.
+- **`git` must be on PATH or 23 C tests fail, and none of them say why.** An MSYS `CLANG64` login
+  shell has no Windows `git`. The suite's own summary reads `5751 passed, 23 failed`; the cause
+  appears once, far up the log, as `'git' is not recognized as an internal or external command`.
+  Add `/c/Program Files/Git/cmd` to the export and it is `5775 passed, 0 failed, 18 skipped`.
+  Verified both ways on 2026-07-31, in that order, on the same tree.
+- **Keep the whole log.** `scripts/test.sh … | tail -35` keeps the summary and discards which tests
+  failed, and the pipe also swallows `make`'s exit code, so a failing run reports success. Redirect
+  to a file (`> scratchpad/c-suite/run-N.log 2>&1; echo "EXIT=$?"`) and grep it. A clean build takes
+  ~25 minutes, so a run whose failures you cannot read costs another 25.
+- **`scripts/test.sh` deletes `graph-ui/node_modules`** — its first step is `scripts/clean.sh`,
+  which removes both `node_modules` trees and `graph-ui/dist` by design ("no stale node_modules").
+  So **run the UI suite before the C suite**, or `npm install` again after. The failure is
+  confusing rather than obvious: `npx tsc` then downloads an unrelated `tsc` package from npm and
+  prints *"This is not the tsc command you are looking for"*, which reads like a broken toolchain
+  rather than a missing install. Run from `graph-ui/`, and check `node_modules` exists first.
 - **Spacing sweep:** `cd graph-ui && npm run probe:spheres` — own config, so it never joins
   `npm test`. Output in `graph-ui/scratchpad/sphere-probe/report.txt`. Seeded synthetic corpus by
   default; `SPHERE_PROBE_CORPUS=<file-sizes.json>` points it at a real one, and

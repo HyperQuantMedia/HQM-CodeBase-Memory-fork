@@ -803,6 +803,42 @@ TEST(ui_server_ui_config_detects_zh_accept_language) {
     PASS();
 }
 
+/* The upstream version of this endpoint also served an `upstream_issues_url`
+ * pointing at its own GitHub tracker, and the missed-coverage callout turned it into
+ * a prefilled issue link. It was removed: no end-user surface here routes a user into
+ * anyone's issue tracker.
+ *
+ * Asserted as an absence with a canary, because an absence nobody checks is an
+ * absence that comes back on the next merge — and this one arrived by merge in the
+ * first place. The canary is `lang`: if the endpoint ever stops answering, the
+ * absence assertions below would pass on an empty body and prove nothing. */
+TEST(ui_server_ui_config_serves_no_external_url) {
+    th_server_t ts;
+    ASSERT_EQ(th_server_start(&ts), 0);
+
+    char resp[4096];
+    int n = th_http(cbm_http_server_port(ts.srv),
+                    "GET /api/ui-config HTTP/1.1\r\n"
+                    "Accept-Language: en-US,en;q=0.9\r\n"
+                    "\r\n",
+                    resp, sizeof(resp));
+    ASSERT_TRUE(n > 0);
+    ASSERT_EQ(th_status(resp), 200);
+
+    /* Canary first: prove the endpoint actually answered. */
+    ASSERT_NOT_NULL(strstr(resp, "\"lang\":"));
+
+    /* Then the absences. Body only — the response headers legitimately carry no
+     * URL, but keeping the search on the whole buffer is simpler and still exact,
+     * since nothing this server sends in a header contains these strings. */
+    ASSERT_NULL(strstr(resp, "upstream_issues_url"));
+    ASSERT_NULL(strstr(resp, "github.com"));
+    ASSERT_NULL(strstr(resp, "https://"));
+
+    th_server_stop(&ts);
+    PASS();
+}
+
 TEST(ui_server_ui_config_prefers_config_lang) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cbm_httpd_cfg_XXXXXX");
@@ -1214,6 +1250,7 @@ SUITE(httpd) {
     RUN_TEST(ui_server_delete_project_invalid_name_keeps_watch);
     RUN_TEST(ui_server_delete_project_unlink_failure_keeps_watch);
     RUN_TEST(ui_server_ui_config_detects_zh_accept_language);
+    RUN_TEST(ui_server_ui_config_serves_no_external_url);
     RUN_TEST(ui_server_ui_config_prefers_config_lang);
     RUN_TEST(ui_server_slow_request_hits_deadline);
     RUN_TEST(ui_server_access_log_redacts_query);

@@ -30,6 +30,12 @@ interface FilterPanelProps {
   /** How many nodes that would remove right now. */
   unlinkedCount: number;
   onToggleHideUnlinked: () => void;
+  /* Missed skeleton: satellite cluster of files the indexer could not fully
+   * cover. Its own toggle rather than a filter chip, because it adds a second
+   * cluster to the scene instead of narrowing the one already there. */
+  missedView: boolean;
+  missedCount: number;
+  onToggleMissedView: () => void;
 }
 
 /* Checkbox row matching the existing "Show labels" toggle style */
@@ -87,6 +93,9 @@ export function FilterPanel({
   hideUnlinked,
   unlinkedCount,
   onToggleHideUnlinked,
+  missedView,
+  missedCount,
+  onToggleMissedView,
 }: FilterPanelProps) {
   /* Dead code folds independently of the filter chips — it is a different job
    * (a code-health lens, not a type filter). Open by default: it was always
@@ -219,6 +228,44 @@ export function FilterPanel({
           )}
         </div>
       </ScrollArea>
+
+      {/* Missed skeleton: satellite cluster of files the indexer could not fully
+          cover, shown beside the code galaxy. Click it to focus; click the code
+          galaxy to come back. Ported from upstream (their issue #963), which
+          answered the same "indexed ≠ present" question our size map hit — theirs
+          says *which* files were missed, ours says *how much*.
+
+          Ink roles rather than opacity modifiers: `text-foreground/30` compiles to
+          a real alpha and can never be theme-aware, so the ported markup was
+          unreadable on the light stage. Layout parity with the rest of the panel is
+          Phase 3's sweep, not this merge's. */}
+      <div className="px-4 pt-2 border-t border-border/30 space-y-2 shrink-0">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-ink-dim uppercase tracking-widest">
+            Partly parsed
+          </span>
+          {missedCount > 0 && (
+            <span className="text-[10px] text-ink-soft tabular-nums">
+              {missedCount.toLocaleString()} files
+            </span>
+          )}
+        </div>
+        <CheckRow
+          checked={missedView}
+          onToggle={onToggleMissedView}
+          label="Show partly-parsed files"
+          count={missedView ? undefined : missedCount}
+        />
+        {/* "Not fully parsed", never "not fully indexed" — these files ARE indexed,
+            and the size view's indexed byte total counts them. Borrowing that word
+            here would have the two views contradicting each other about the same
+            corpus. The three states are named on `MissedGraph` in lib/types.ts. */}
+        <p className="text-[9px] leading-snug text-ink-dim">
+          {missedCount > 0
+            ? "Satellite cluster = files the parser could only read in part (best-effort). Click it to focus, click the galaxy to return."
+            : "Nothing known to be partly parsed (best-effort — not a completeness guarantee)."}
+        </p>
+      </div>
 
       {/* Dead-code view */}
       <div className="border-t border-border/30 shrink-0">

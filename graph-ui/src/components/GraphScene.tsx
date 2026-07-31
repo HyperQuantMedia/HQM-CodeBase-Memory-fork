@@ -140,6 +140,11 @@ interface GraphSceneProps {
   stage?: Stage;
   /** How far links bow away from a straight chord, 0–1. */
   edgeCurve?: number;
+  /* Missed skeleton: pre-offset, pre-painted nodes + edges of the
+   * not-fully-indexed files, rendered as a ghost cluster beside the galaxy.
+   * null hides it. Same shape as a linked project's satellite, deliberately —
+   * one offset-cluster path serves both. */
+  missed?: { nodes: GraphNode[]; edges: GraphData["edges"] } | null;
   highlightedIds: Set<number> | null;
   cameraTarget: CameraTarget | null;
   showLabels: boolean;
@@ -161,6 +166,9 @@ interface GraphSceneProps {
   pathLightColor?: string;
   /** Canvas clear colour, so the scene follows the light/dark theme. */
   background?: string;
+  /* Fired when a click hits empty space (no node). Used to fly back to the
+   * overview after focusing the missed skeleton. */
+  onBackgroundClick?: () => void;
 }
 
 export type { CameraTarget };
@@ -183,6 +191,7 @@ export function GraphScene({
   data,
   stage = "dark",
   edgeCurve = 0,
+  missed = null,
   highlightedIds,
   cameraTarget,
   showLabels,
@@ -197,6 +206,7 @@ export function GraphScene({
   pathLightSpeed = 1,
   pathLightColor = "",
   background = "#06090f",
+  onBackgroundClick,
 }: GraphSceneProps) {
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
@@ -220,6 +230,7 @@ export function GraphScene({
         alpha: false,
         powerPreference: "high-performance",
       }}
+      onPointerMissed={onBackgroundClick}
     >
       <color attach="background" args={[background]} />
       <FovSync fov={fov} />
@@ -254,6 +265,40 @@ export function GraphScene({
           highlightedIds={highlightedIds}
           stage={stage}
         />
+      )}
+
+      {/* Missed skeleton: ghost cluster of the not-fully-indexed files. Clicks
+       * route through the same handler — GraphTab re-centers the camera on the
+       * whole skeleton cluster.
+       *
+       * `stage` on all three, which the ported version omitted: upstream has no
+       * light theme (`lib/theme.ts` does not exist on their base), so a missing
+       * stage silently meant "dark" and this cluster would have drawn with the
+       * wrong render model on the light stage — emission on darkness where the
+       * page is ink on paper. */}
+      {missed && missed.nodes.length > 0 && (
+        <group>
+          <EdgeLines
+            nodes={missed.nodes}
+            edges={missed.edges}
+            highlightedIds={null}
+            opacity={0.28}
+            brightness={display.edgeBrightness}
+            stage={stage}
+          />
+          <NodeCloud
+            nodes={missed.nodes}
+            highlightedIds={null}
+            onHover={setHovered}
+            onClick={onNodeClick}
+            opacity={0.6}
+            boost={nodeBoost * 0.75}
+            stage={stage}
+          />
+          {showLabels && (
+            <NodeLabels nodes={missed.nodes} highlightedIds={null} stage={stage} />
+          )}
+        </group>
       )}
 
       {/* Satellite galaxies for cross-repo linked projects */}

@@ -108,13 +108,10 @@ everyone's panel widths and sort orders, so it needs a migration or a decision n
 
 ### Should the spacing dial be a user control?
 
-The probe measures it and the footer now states it, but nobody can move it by hand — the delegated
-measurement is the only writer. Two things argue for a control: the value is
-**projection-and-corpus-dependent** (measured — the `tree` fit no-ops across half the range on one
-corpus and responds across all of it on another), and C10 is already giving the size map a
-user-controllable node budget, so a second dial in the same menu is cheap. Against: two controls
-that both change how crowded the scene looks, and the measured answer has agreed with the shipped
-value on every corpus tried so far.
+**Scheduled — Phase 4b of the cycle plan, not now.** A "size by" control and a "how far apart"
+control are one menu, one persistence key and one parity argument, so they land together or twice.
+The trade-off is written up in the plan at that phase; nothing here is blocked meanwhile, because the
+measured answer has agreed with the shipped 0.70 on every corpus tried.
 
 ### Does the size map need the graph's dead-code lens equivalent?
 

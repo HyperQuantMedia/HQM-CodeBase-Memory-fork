@@ -205,6 +205,24 @@ Two *real* defects were found in these files while chasing this, and both are fi
 `soak.yml` reference (`7825f288`) and `type: number` under `workflow_dispatch`, which is illegal —
 only `boolean`, `choice`, `environment`, `string` are (`dce7050c`).
 
+### B9 — Relationship chips use an opacity modifier, so they ignore the light stage
+
+**Severity:** low · **Status:** open, found 2026-07-31 while porting the missed graph
+
+`FilterPanel.tsx`'s relationship chips carry `text-foreground/60`. Tailwind v4 opacity modifiers
+compile to a real alpha, so the colour cannot be theme-aware — the standing ruling is to name the
+ink role instead ([`decisions/2026-07-30-light-is-a-render-model.md`](decisions/2026-07-30-light-is-a-render-model.md)).
+Same class of defect as the ported missed-graph markup fixed in the merge, but this one predates it
+and is ours.
+
+Found by a test written for the *ported* section: asserting "no opacity modifiers" over the whole
+panel failed on this line, so the assertion was scoped to the new section and this was recorded
+rather than quietly widened. **Fix belongs to Phase 3's parity sweep**, which is already touching
+this panel.
+
+**Repro:** switch to the light theme and compare a relationship chip's contrast against a node-type
+chip beside it.
+
 ---
 
 ## Closed this cycle
