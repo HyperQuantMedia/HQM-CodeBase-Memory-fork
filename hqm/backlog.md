@@ -77,11 +77,23 @@ line to change either way; not mine to change.
 
 ## ready
 
-### Widen `Breadcrumb`'s `onSelect` to pass the `Crumb`
+### A "containment" projection for the size map — children inside translucent parent spheres
+
+Proposed by the owner 2026-08-01 (B1 round 5), with a worked visual reference: the ratchet-field
+model at `F:\Git\HQM-Observatory\substrate\theory\models\2026-07-24-ratchet-field-theory-v2.html`
+— thick translucent shells with content living INSIDE them, sub-problems opening their own
+smaller spheres. Applied here: a folder is a translucent sphere, its files and subfolders are
+solid/smaller spheres physically inside it, recursively — containment drawn as containment,
+instead of the current projections' adjacency-with-edges. Would join the view cycle as a fifth
+view (`treemap · sphere · cone · tree · containment`). Real work: a nested-packing layout
+(sphere-in-sphere packing per level), translucency that survives both light stages, and the
+node budget applying per-depth rather than globally. Not started; the reference is the spec for
+the *feel*, not the mechanics.
+
+### ~~Widen `Breadcrumb`'s `onSelect` to pass the `Crumb`~~ ✅ done in Phase 3 slice 1 (`6b4a58be`)
 
 Unblocks **B2** properly instead of working around it. Touches `GraphTab` as well as `SizeTab`,
-which is why it was not done inline mid-feature. Settled 2026-07-31 and scheduled — it lands in the
-Phase 3 parity sweep.
+which is why it was not done inline mid-feature. Settled 2026-07-31 — landed 2026-08-01.
 
 ### Promote the remaining probe rig out of `scratchpad/`
 

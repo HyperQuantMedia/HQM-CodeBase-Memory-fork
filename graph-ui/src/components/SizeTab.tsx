@@ -178,6 +178,26 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
    * graph tab's ? and Refresh. */
   const [helpOpen, setHelpOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  /* Esc = the way back (owner, round 5): clear a pick first, else climb one
+   * level. Same escape-hatch pattern as the graph tab, skipped while typing. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      setPicked((p) => {
+        if (p) return null;
+        setFocus((f) => {
+          if (!f) return f;
+          const parent = f.split("/").slice(0, -1).join("/");
+          return parent;
+        });
+        return p;
+      });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   /* File kinds switched off. Exclusions rather than inclusions, so a kind that only
    * appears after drilling into a new folder is visible immediately. */
   const [mutedKinds, setMutedKinds] = useState<Set<FileKind>>(new Set());
@@ -824,6 +844,20 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
             {picked && (
               <Button size="sm" onClick={() => setPicked(null)}>
                 Clear selection
+              </Button>
+            )}
+            {/* The way OUT of a drilled folder (owner, round 5). C9's ruling
+                dropped the old Up button while the drill row sat above the map;
+                round 4 moved the trail to the header and took the visible exit
+                with it. So the exit returns HERE, beside Clear selection —
+                state controls appear when their state exists. Esc mirrors it. */}
+            {focus && (
+              <Button
+                size="sm"
+                onClick={() => setFocus(crumbs[crumbs.length - 2]?.path ?? "")}
+                title="Up one level (Esc)"
+              >
+                ↑ Up
               </Button>
             )}
             {/* C10: the graph tab's node-budget control, verbatim — same label,
