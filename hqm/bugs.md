@@ -30,8 +30,10 @@ still the gate ([`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cyc
 
 ### B1 — Round 5–8 UI work is unverified by eyes
 
-**Severity:** was blocking the cycle · **Status:** **density APPROVED 2026-08-01 round 2 — the
-gate is open.** Remaining: owner's eye on the B12/B13/B14 fixes and the unnamed "mostly" remainder
+**Severity:** was blocking the cycle · **Status:** density APPROVED (round 2); **round 6
+(`index-Bo_D9Kfv` — colour system, A3a, the round-4/5 layout) SERVED and NOT APPROVED — owner
+deferred all verdicts to the next session.** Eye-certified so far: round 1's approvals and the
+0.85 density only. Remaining: everything since, plus the unnamed "mostly" remainder
 
 **Round 2 (bundle `index-LIahPU0Q`): spacing 0.85 approved by eye.** Owner's words: it reads
 right *because it is a 3D view, not a 2D perspective, and the rotation matters* — density

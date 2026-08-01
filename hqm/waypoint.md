@@ -21,7 +21,8 @@ end: labels, edge types (item 5), kinds (B3), all overridable in one Colors tab,
 
 ### PENDING ON RAHUL — the complete ledger
 
-**Eyes (B1 round 6, serve with the batch file after the running rc7 build lands):**
+**Eyes (B1 round 6 — SERVED as `index-Bo_D9Kfv` and NOT approved; the owner deferred all
+verdicts to the next session. Everything below is suite-green and unjudged):**
 1. The colour system: Settings → Colors in BOTH tabs (labels + relationships in graph; kinds in
    size map), recoloured filter chips, edge recolouring live in the scene.
 2. A3a: flip some filters, switch projects, come back — they hold per project.
@@ -266,6 +267,13 @@ caught, and rounds 5–8 were *entirely* owner-found or owner-directed. Do not t
 suite as evidence that a visual change works.
 
 ## Judgment layer
+
+- **The 2026-08-01 rulings live in one record** —
+  [`decisions/2026-08-01-b1-rounds-and-the-v020-build-out.md`](decisions/2026-08-01-b1-rounds-and-the-v020-build-out.md):
+  density recalibration (never judge spacing from a still), the four-ruling panel chain (a test
+  defends whichever call is newest), the icon language (glyphs serve, the Projects tab teaches),
+  one colour system, parity extensions, exits (re-check what removals leaned on when layout
+  moves), filters as exclusions. Read it before touching any of those surfaces.
 
 - **Visual work is owner-verified, not suite-verified.** Twenty defects across eight rounds;
   the suite was green for every one, the type checker clean, my own reads unsuspicious. Ship a
