@@ -29,9 +29,11 @@ import { ResizeHandle } from "./ResizeHandle";
 import { SizeTree } from "./SizeTree";
 import { GraphTabIcon } from "./TabIcons";
 import {
+  loadDisabledSet,
   loadFlag,
   loadNodeBudget,
   loadWidth,
+  saveDisabledSet,
   saveFlag,
   saveNodeBudget,
   saveWidth,
@@ -202,8 +204,22 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
   /* File kinds switched off. Exclusions rather than inclusions, so a kind that only
-   * appears after drilling into a new folder is visible immediately. */
+   * appears after drilling into a new folder is visible immediately. Persisted
+   * per project (A3a) — the same exclusion logic the graph tab's filters use. */
   const [mutedKinds, setMutedKinds] = useState<Set<FileKind>>(new Set());
+  useEffect(() => {
+    if (project) setMutedKinds(loadDisabledSet("kinds", project) as Set<FileKind>);
+  }, [project]);
+  const changeMutedKinds = useCallback(
+    (updater: (prev: Set<FileKind>) => Set<FileKind>) => {
+      setMutedKinds((prev) => {
+        const next = updater(prev);
+        if (project) saveDisabledSet("kinds", project, next);
+        return next;
+      });
+    },
+    [project],
+  );
   /* Labels name the biggest files, which on a size map is exactly the list worth
    * naming — NodeLabels ranks by node size. */
   const [showLabels, setShowLabels] = useState(true);
@@ -410,13 +426,13 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
   }, [data]);
 
   const toggleKind = useCallback((kind: FileKind) => {
-    setMutedKinds((prev) => {
+    changeMutedKinds((prev) => {
       const next = new Set(prev);
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
       return next;
     });
-  }, []);
+  }, [changeMutedKinds]);
 
   /* The spacing dial, and the delegated job that measures it.
    *
@@ -634,7 +650,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           actions={
             mutedKinds.size > 0 ? (
               <button
-                onClick={() => setMutedKinds(new Set())}
+                onClick={() => changeMutedKinds(() => new Set())}
                 className="text-[10px] text-primary/70 hover:text-primary transition-colors"
               >
                 All

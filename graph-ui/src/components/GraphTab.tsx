@@ -57,9 +57,11 @@ import { downloadStaticPage } from "../lib/exportStatic";
 import { resolvedTheme, themeVar } from "../lib/theme";
 import { stageForTheme } from "../lib/sceneInk";
 import {
+  loadDisabledSet,
   loadFlag,
   loadNodeBudget,
   loadWidth,
+  saveDisabledSet,
   saveFlag,
   saveNodeBudget,
   saveWidth,
@@ -205,7 +207,8 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
    * and the graph did not get any smaller. */
   const [hideUnlinked, setHideUnlinked] = useState(false);
 
-  /* Initialize filters when data loads */
+  /* Initialize filters when data loads — everything on, minus this project's
+   * persisted exclusions (A3a). */
   useEffect(() => {
     if (!data) return;
     const labels = new Set(data.nodes.map((n) => n.label));
@@ -215,9 +218,32 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
       for (const e of lp.edges) types.add(e.type);
       for (const e of lp.cross_edges) types.add(e.type);
     }
+    if (project) {
+      for (const off of loadDisabledSet("labels", project)) labels.delete(off);
+      for (const off of loadDisabledSet("edges", project)) types.delete(off);
+    }
     setEnabledLabels(labels);
     setEnabledEdgeTypes(types);
-  }, [data]);
+  }, [data, project]);
+
+  /* Persist the exclusions whenever a filter changes. Derived from the data
+   * (all types minus enabled) so the stored set never accumulates types that
+   * no longer exist in the corpus. */
+  const persistFilters = useCallback(
+    (labels: Set<string>, types: Set<string>) => {
+      if (!data || !project) return;
+      const allLabels = new Set(data.nodes.map((n) => n.label));
+      const allTypes = new Set(data.edges.map((e) => e.type));
+      for (const lp of data.linked_projects ?? []) {
+        for (const n of lp.nodes) allLabels.add(n.label);
+        for (const e of lp.edges) allTypes.add(e.type);
+        for (const e of lp.cross_edges) allTypes.add(e.type);
+      }
+      saveDisabledSet("labels", project, new Set([...allLabels].filter((l) => !labels.has(l))));
+      saveDisabledSet("edges", project, new Set([...allTypes].filter((t) => !types.has(t))));
+    },
+    [data, project],
+  );
 
   /* Compute filtered data */
   const filteredData: GraphData | null = useMemo(() => {
@@ -547,18 +573,20 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
       const next = new Set(prev);
       if (next.has(label)) next.delete(label);
       else next.add(label);
+      persistFilters(next, enabledEdgeTypes);
       return next;
     });
-  }, []);
+  }, [persistFilters, enabledEdgeTypes]);
 
   const toggleEdgeType = useCallback((type: string) => {
     setEnabledEdgeTypes((prev) => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
       else next.add(type);
+      persistFilters(enabledLabels, next);
       return next;
     });
-  }, []);
+  }, [persistFilters, enabledLabels]);
 
   const enableAll = useCallback(() => {
     if (!data) return;
@@ -571,12 +599,14 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
     }
     setEnabledLabels(labels);
     setEnabledEdgeTypes(types);
-  }, [data]);
+    persistFilters(labels, types);
+  }, [data, persistFilters]);
 
   const disableAll = useCallback(() => {
     setEnabledLabels(new Set());
     setEnabledEdgeTypes(new Set());
-  }, []);
+    persistFilters(new Set(), new Set());
+  }, [persistFilters]);
 
   const ViewIcon = VIEW_MODE_ICON[view.mode];
 

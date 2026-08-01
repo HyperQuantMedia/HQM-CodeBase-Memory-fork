@@ -54,6 +54,32 @@ export function saveNodeBudget(project: string, value: number) {
   } catch { /* private mode / quota — the budget just does not persist */ }
 }
 
+/* A3a: per-project filter persistence. What is stored is the DISABLED set —
+ * the default is everything-on, and storing exclusions means a label or edge
+ * type that appears for the first time is visible immediately instead of
+ * silently filtered by a stale allowlist. Generalises the node-budget
+ * precedent: templated per-project key, guarded round-trip, clamp-on-read
+ * (here: strings only). Filters are per-project by the A3a ruling; theme,
+ * panel widths, sort orders and projection stay global. */
+export function loadDisabledSet(kind: string, project: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`cbm-disabled-${kind}:${project}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((v): v is string => typeof v === "string"));
+      }
+    }
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+export function saveDisabledSet(kind: string, project: string, disabled: Set<string>) {
+  try {
+    localStorage.setItem(`cbm-disabled-${kind}:${project}`, JSON.stringify([...disabled]));
+  } catch { /* private mode / quota — the filters just do not persist */ }
+}
+
 export function loadFlag(key: string, fallback: boolean): boolean {
   try {
     const v = localStorage.getItem(key);
