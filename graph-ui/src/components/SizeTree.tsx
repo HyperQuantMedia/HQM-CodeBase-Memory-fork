@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Folder, FileText } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatBytes, type SizeNode } from "../lib/sizeMap";
-import { fileKind, KIND_COLORS } from "../lib/fileKind";
+import { colorForKind, fileKind } from "../lib/fileKind";
 import { OpenButtons } from "./OpenButtons";
 import { SortControl } from "./SortControl";
 import { loadSort, saveSort, sortByOrder, type SortOrder } from "../lib/sortOrder";
@@ -112,7 +112,7 @@ function TreeRow({
             <>
               <span
                 className="w-[5px] h-[5px] rounded-full shrink-0"
-                style={{ backgroundColor: KIND_COLORS[fileKind(node.path)] }}
+                style={{ backgroundColor: colorForKind(fileKind(node.path)) }}
               />
               <span className="truncate font-mono">{node.name}</span>
             </>
@@ -277,7 +277,7 @@ export function SizeTree({
                       ) : (
                         <span
                           className="w-[5px] h-[5px] rounded-full shrink-0"
-                          style={{ backgroundColor: KIND_COLORS[fileKind(n.path)] }}
+                          style={{ backgroundColor: colorForKind(fileKind(n.path)) }}
                         />
                       )}
                       <span className="text-foreground/60 truncate">{n.name}</span>

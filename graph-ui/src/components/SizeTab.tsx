@@ -11,7 +11,7 @@ import {
   type FileSize,
   type SizeNode,
 } from "../lib/sizeMap";
-import { fileKind, KIND_COLORS, type FileKind } from "../lib/fileKind";
+import { colorForKind, fileKind, FILE_KINDS, KIND_COLORS, setKindColorOverrides, type FileKind } from "../lib/fileKind";
 import { DEFAULT_MAX_NODES, drawnRadius, FOLDER_COLOR, sizeTreeToGraph } from "../lib/sizeGraph";
 import {
   clampNodeBudget,
@@ -174,6 +174,9 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
       setBudget(parsed);
     }
   }, [budgetDraft, project, budget]);
+  /* B3: kind colours are user overrides riding in appearance.labelColors
+   * (kinds are lowercase, labels Capitalised — no collision). Installed into
+   * fileKind's module store so every kind-coloured surface sees them. */
   /* Toolbar parity (round 4): help modal and a manual re-walk, same as the
    * graph tab's ? and Refresh. */
   const [helpOpen, setHelpOpen] = useState(false);
@@ -233,6 +236,11 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
    * tabs showing the same tree would be its own defect. */
   const [appearances, setAppearances] = useState<AppearanceSet>(() => loadAppearances());
   const appearance = appearances[stage] ?? APPEARANCE_DEFAULTS[stage];
+  /* B3: install kind overrides (they ride in labelColors — kinds lowercase,
+   * labels Capitalised, no collision) so every colorForKind caller sees them. */
+  useEffect(() => {
+    setKindColorOverrides(appearance.labelColors);
+  }, [appearance.labelColors]);
   const updateAppearance = useCallback(
     (next: Appearance) => {
       setAppearances((prev) => {
@@ -374,7 +382,9 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
    * without any special casing. */
   const sizeGraph = useMemo(
     () => (view === "treemap" || !node ? null : sizeTreeToGraph(node, { maxNodes: budget })),
-    [view, node, budget],
+    /* appearance.labelColors: node colours are baked at build time through
+       colorForKind, so a kind override has to re-derive the graph (B3). */
+    [view, node, budget, appearance.labelColors],
   );
 
   /* Classifier chips: which file kinds the corpus holds, how many, how heavy.
@@ -395,7 +405,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
       tally.set(kind, row);
     }
     return [...tally.entries()]
-      .map(([kind, row]) => ({ kind, ...row, color: KIND_COLORS[kind] }))
+      .map(([kind, row]) => ({ kind, ...row, color: colorForKind(kind) }))
       .sort((a, b) => b.bytes - a.bytes);
   }, [data]);
 
@@ -574,7 +584,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
   const pickedColor = picked
     ? picked.children.length > 0
       ? FOLDER_COLOR
-      : KIND_COLORS[fileKind(picked.path)]
+      : colorForKind(fileKind(picked.path))
     : FOLDER_COLOR;
 
   return (
@@ -902,11 +912,13 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 onAppearanceReset={resetAppearance}
                 view={viewSettings}
                 onViewChange={updateViewSettings}
-                /* Empty on purpose: the Colors tab overrides colours resolved by
-                   colorForLabel(), and this view colours by file *kind* out of
-                   KIND_COLORS. Feeding it kind names would render swatches that
-                   change nothing. Logged in hqm/backlog.md. */
-              labels={[]}
+                /* B3 settled: kind colours ARE user-themeable now. The one
+                 Colors tab lists the kinds; overrides ride in labelColors and
+                 resolve through colorForKind on every kind-coloured surface. */
+              labels={FILE_KINDS}
+              defaultColorFor={(name) =>
+                KIND_COLORS[name as FileKind] ?? colorForLabel(name)
+              }
             />
             {onOpenGraph && (
               <Button
@@ -1002,7 +1014,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           const isFolder = tile.node.children.length > 0;
           const color = isFolder
             ? "var(--color-info)"
-            : KIND_COLORS[fileKind(tile.node.path)];
+            : colorForKind(fileKind(tile.node.path));
           const showLabel = tile.w >= LABEL_MIN_W && tile.h >= LABEL_MIN_H;
           return (
             <button

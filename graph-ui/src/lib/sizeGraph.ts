@@ -28,7 +28,7 @@
  * Kept free of React and of three.js so the geometry is testable on plain numbers. */
 
 import type { GraphEdge, GraphNode } from "./types";
-import { fileKind, KIND_COLORS, type FileKind } from "./fileKind";
+import { colorForKind, fileKind, type FileKind } from "./fileKind";
 import type { SizeNode } from "./sizeMap";
 
 /* World size of the median file. Everything else is proportional to it; the
@@ -171,7 +171,7 @@ export function sizeTreeToGraph(
       file_path: sizeNode.path,
       /* Filled in below, once the median is known. */
       size: isFolder ? -1 : sizeNode.bytes,
-      color: isFolder ? FOLDER_COLOR : KIND_COLORS[fileKind(sizeNode.path)],
+      color: isFolder ? FOLDER_COLOR : colorForKind(fileKind(sizeNode.path)),
     });
     bySizeNode.set(id, sizeNode);
 

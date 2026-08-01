@@ -47,6 +47,9 @@ interface SettingsMenuProps {
   /** Edge types present in the loaded graph (Phase 4a) — the Colors tab grows a
    * Relationships section when any are passed. */
   edgeTypes?: string[];
+  /** Palette default for a list entry. The size tab passes the kind palette
+   * (B3); the graph tab keeps the label palette default. */
+  defaultColorFor?: (name: string) => string;
 }
 
 const STAGE_LABEL: Record<Stage, string> = { dark: "Dark", light: "Light" };
@@ -176,6 +179,7 @@ export function SettingsMenu({
   onViewChange,
   labels,
   edgeTypes = [],
+  defaultColorFor = defaultColorForLabel,
 }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<TabId>("view");
@@ -412,7 +416,7 @@ export function SettingsMenu({
                   {sortedLabels.map((label) => {
                     const overridden = appearance.labelColors[label] !== undefined;
                     const value =
-                      appearance.labelColors[label] ?? defaultColorForLabel(label);
+                      appearance.labelColors[label] ?? defaultColorFor(label);
                     return (
                       <div key={label} className="flex items-center gap-2">
                         <input

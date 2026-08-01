@@ -158,3 +158,23 @@ export const KIND_COLORS: Record<FileKind, string> = {
   config: "#eab308",
   other: "#64748b",
 };
+
+/* B3 (Phase 4a): kind colours are user-themeable through the ONE Colours tab.
+ * The overrides ride in appearance.labelColors keyed by kind name — kinds are
+ * lowercase and labels Capitalised, so the keyspaces cannot collide — and the
+ * size tab installs them here the same way GraphTab installs label overrides.
+ * Every kind-coloured surface must resolve through colorForKind, never index
+ * KIND_COLORS directly, or it goes blind to the user's choice. */
+let kindOverrides: Record<string, string> = {};
+
+export function setKindColorOverrides(overrides: Record<string, string>) {
+  kindOverrides = overrides;
+}
+
+export function colorForKind(kind: FileKind): string {
+  return kindOverrides[kind] ?? KIND_COLORS[kind];
+}
+
+export function defaultColorForKind(kind: FileKind): string {
+  return KIND_COLORS[kind];
+}
