@@ -3,7 +3,54 @@
 
 # Waypoint — HQM work in this fork
 
-Updated: 2026-07-31 · Focus set by: Rahul
+Updated: 2026-08-01 · Focus set by: Rahul
+
+---
+
+## ⛳ SESSION STATE 2026-08-01 — the cycle is mostly BUILT; what remains is owner decisions
+
+One overnight run took the v0.2.0 cycle from "Phase 2 done" to: **Phases 0, 2, 3 done; Phase 4
+done except 4b and A3b; Phase 5's A1+A2+E done, A16 unblocked; A2 landed in HQM-Astra
+(`49c4ad7` on `dev`)**. Five B1 rounds ran the same day with the owner live — density approved
+at 0.85, three defects found and fixed same-round (B12/B13/B14), the panel layout evolved
+through four owner rulings into a floating card + left rail, toolbars and breadcrumbs reached
+parity, the drilled map got its exit back (`↑ Up` + Esc). The colour system now exists end to
+end: labels, edge types (item 5), kinds (B3), all overridable in one Colors tab, all persisted
+(item 6); filters persist per project as exclusion sets (A3a, `678908ad`).
+`hqm/scripts/serve-cartograph.bat` starts/stops the local server for anyone (relative paths).
+
+### PENDING ON RAHUL — the complete ledger
+
+**Eyes (B1 round 6, serve with the batch file after the running rc7 build lands):**
+1. The colour system: Settings → Colors in BOTH tabs (labels + relationships in graph; kinds in
+   size map), recoloured filter chips, edge recolouring live in the scene.
+2. A3a: flip some filters, switch projects, come back — they hold per project.
+3. Anything from rounds 4–5 not yet eyeballed (floating card, rail positions, toolbar order,
+   header trail, `↑ Up`/Esc), plus the still-unnamed "graph sidebar mostly" remainder.
+
+**Design calls:**
+4. **4b** — the size-by control (load-bearing = in-degree vs bytes), and the two parked spacing
+   questions. Your round-2 phrasing leaned toward the probe re-running itself on view change —
+   logged, not yet built.
+5. **Containment projection** — registered ready in `backlog.md` with your ratchet-field
+   reference. Say go and it is the next build item.
+6. **A3b** — ignore-rule UI. The two-controls reading (folder rules prune, filetype rules
+   filter) is a session call sitting in your plan — confirm or overturn before it is built.
+7. **`CROSS_SOURCE`** edge type vs the plan's literal `SOURCE` (renamed so `/api/layout`'s
+   `CROSS_%` filter surfaces it) — flagged for override, zero cost either way.
+
+**Ship/infra acts (each one deliberate):**
+8. **Pushes** — fork `HQM-dev` is ~20 commits ahead of origin locally; Astra `dev` has
+   `49c4ad7`. All fast-forwards.
+9. **Linux build** — the only thing that closes **B11** (executable-stack proof, gate A1).
+10. **Release** — Phase 6.2: local `--with-ui` build as the gate, delete the stale
+    `v0.9.0-hqm-v0.1.0` draft, cut `HQM-dev → main`, dispatch on `main` (two deliberate
+    re-enable acts; see Reference).
+11. **Board writes** — #69 comment, #68 close.
+12. **CBM naming residue** — now MORE urgent: A3a and C10 added more per-project `cbm-*`
+    localStorage keys; renaming later means a migration or a decision not to bother.
+13. Standing: promotion of `main`, the Astra `cbm.pin.json` pin, whether the treemap stays the
+    default view.
 
 ---
 
