@@ -46,6 +46,9 @@ import {
 } from "../lib/appearance";
 import { stageForTheme } from "../lib/sceneInk";
 import { resolvedTheme, themeVar } from "../lib/theme";
+import { colorForLabel } from "../lib/colors";
+import { downloadStaticPage } from "../lib/exportStatic";
+import { HelpModal } from "./HelpModal";
 import { loadViewSettings, saveViewSettings, type ViewSettings } from "../lib/viewSettings";
 import {
   applyViewMode,
@@ -171,6 +174,10 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
       setBudget(parsed);
     }
   }, [budgetDraft, project, budget]);
+  /* Toolbar parity (round 4): help modal and a manual re-walk, same as the
+   * graph tab's ? and Refresh. */
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   /* File kinds switched off. Exclusions rather than inclusions, so a kind that only
    * appears after drilling into a new folder is visible immediately. */
   const [mutedKinds, setMutedKinds] = useState<Set<FileKind>>(new Set());
@@ -268,7 +275,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [project, source]);
+  }, [project, source, refreshTick]);
 
   /* The frame is sized by flex, so the tile geometry has to follow its real box
    * rather than assume one.
@@ -425,6 +432,25 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
     return { nodes: placed, edges: sizeGraph.edges, total_nodes: placed.length };
   }, [sizeGraph, view, sphereProbe.quantile]);
 
+  /* Toolbar parity: Export downloads the current projection as the same kind of
+   * standalone page the graph tab produces. Treemap has no scene to export —
+   * the button says so and stays disabled there. */
+  const handleExport = useCallback(() => {
+    if (!scene || !project) return;
+    const labelColors: Record<string, string> = {};
+    for (const label of new Set(scene.nodes.map((n) => n.label))) {
+      labelColors[label] = colorForLabel(label);
+    }
+    downloadStaticPage({
+      project,
+      nodes: scene.nodes,
+      edges: scene.edges,
+      theme: resolvedTheme(),
+      labelColors,
+      generatedAt: new Date().toISOString(),
+    });
+  }, [scene, project]);
+
   /* Frame the whole scene whenever the geometry changes shape — a new projection, a
    * new focus, a kind switched off. Not on every render: reframing on a no-op would
    * yank a camera the user had just positioned. */
@@ -532,20 +558,21 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
     : FOLDER_COLOR;
 
   return (
-    <div className="h-full flex">
-      {/* C7 round 3: collapsed sections dock on the rail, same as the graph tab. */}
-      {(!filtersOpen || !foldersOpen) && (
-        <div className="w-8 border-r border-border/30 bg-sidebar/90 flex flex-col items-center gap-1 py-2 shrink-0">
-          {!filtersOpen && (
-            <CollapsedRailTab
-              title="Filters"
-              onOpen={() => {
-                saveFlag("cbm-filters-open", true);
-                setFiltersOpen(true);
-              }}
-            />
-          )}
-          {!foldersOpen && (
+    <div className="h-full flex relative">
+      {/* C7 round 4: rail always present — Filters' tab top, Folders' tab middle;
+          open panels float over the map. Mirrors GraphTab exactly. */}
+      <div className="w-8 border-r border-border/30 bg-sidebar/90 flex flex-col items-center gap-1 py-2 shrink-0">
+        {!filtersOpen && (
+          <CollapsedRailTab
+            title="Filters"
+            onOpen={() => {
+              saveFlag("cbm-filters-open", true);
+              setFiltersOpen(true);
+            }}
+          />
+        )}
+        {!foldersOpen && (
+          <div className="my-auto">
             <CollapsedRailTab
               title="Folders"
               onOpen={() => {
@@ -553,13 +580,13 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 setFoldersOpen(true);
               }}
             />
-          )}
-        </div>
-      )}
-      {/* Left panel — resizable, present only while a section is open */}
+          </div>
+        )}
+      </div>
+      {/* Open sections float over the map as a content-height card. */}
       {(filtersOpen || foldersOpen) && (
       <div
-        className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
+        className="absolute left-8 top-0 z-20 max-h-full flex flex-col bg-sidebar/95 backdrop-blur-md border-r border-b border-border/40 rounded-br-lg overflow-hidden"
         style={{ width: leftWidth }}
       >
         {filtersOpen && (
@@ -572,15 +599,8 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
               return !v;
             })
           }
-          /* Same capping rule as the graph tab, for the same reason: 55% while the
-             tree is open, the whole column once it folds away. */
-          className={`border-b border-border/40 ${
-            !filtersOpen
-              ? "shrink-0"
-              : foldersOpen
-                ? "max-h-[55%] shrink-0"
-                : "flex-1 min-h-0"
-          }`}
+          /* Content-height inside the floating card, same as the graph tab. */
+          className="border-b border-border/40 flex-[0_1_auto] min-h-0"
           actions={
             mutedKinds.size > 0 ? (
               <button
@@ -688,7 +708,7 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
               return !v;
             })
           }
-          className="flex-1 min-h-0"
+          className="flex-[0_1_auto] min-h-0"
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
               {formatBytes(node.bytes)}
@@ -705,58 +725,43 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           />
         </CollapsibleSection>
         )}
+        {/* The drag edge rides the floating card. */}
+        <div className="absolute right-0 inset-y-0 flex">
+          <ResizeHandle
+            side="left"
+            onResize={(d) => {
+              setLeftWidth((w) => {
+                const nw = Math.max(150, Math.min(500, w + d));
+                saveWidth("cbm-left-w", nw);
+                return nw;
+              });
+            }}
+          />
+        </div>
       </div>
-      )}
-      {(filtersOpen || foldersOpen) && (
-      <ResizeHandle
-        side="left"
-        onResize={(d) => {
-          setLeftWidth((w) => {
-            const nw = Math.max(150, Math.min(500, w + d));
-            saveWidth("cbm-left-w", nw);
-            return nw;
-          });
-        }}
-      />
       )}
 
       {/* Map area */}
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Drill path. The graph tab has no equivalent because its breadcrumb is a
-            selection trail; here the path IS the view's scope. */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 shrink-0 flex-wrap">
-          <nav aria-label="Size map path" className="flex items-center gap-1 flex-wrap min-w-0">
-            {crumbs.map((crumb, i) => {
-              const last = i === crumbs.length - 1;
-              return (
-                <span key={crumb.path || "__root"} className="flex items-center gap-1">
-                  {i > 0 && (
-                    <span className="text-ink-dim select-none" aria-hidden="true">
-                      /
-                    </span>
-                  )}
-                  <button
-                    onClick={() => setFocus(crumb.path)}
-                    className={`text-[11px] max-w-[200px] truncate transition-colors ${
-                      last ? "text-foreground font-medium" : "text-ink-soft hover:text-primary"
-                    }`}
-                  >
-                    {crumb.name || project}
-                  </button>
-                </span>
-              );
-            })}
-          </nav>
-          <span className="ml-auto text-[11px] text-ink-soft tabular-nums shrink-0">
-            {formatBytes(node.bytes)} · {node.fileCount.toLocaleString()} files
-          </span>
-          {/* C9: no Up button — the drill path IS the up control, and the graph
-              view has no equivalent, so parity drops it rather than adds one. */}
-        </div>
-
         <div className="flex-1 relative min-h-0 overflow-hidden">
-          {/* The picked node's ancestry, in the header slot the graph tab uses — so
-              the same information sits in the same place whichever tab is open. */}
+          {/* Breadcrumb parity (owner, round 4): ONE trail surface, the header
+              slot both tabs share — no separate drill row above the map. The
+              picked file's ancestry wins when a pick exists; otherwise the trail
+              IS the drill path (clicking a level focuses it, the root clears).
+              C9 stands: the trail is the up control. The level's totals live in
+              the footer, where the corpus totals already were. */}
+          {pickCrumbs.length === 0 && crumbs.length > 1 && (
+            <Breadcrumb
+              crumbs={crumbs.slice(1).map((c) => ({
+                label: c.name,
+                full: c.path,
+                nodeId: null,
+                subtreeIds: [],
+              }))}
+              root={project}
+              onSelect={(crumb) => setFocus(crumb ? crumb.full : "")}
+            />
+          )}
           {pickCrumbs.length > 0 && (
             <Breadcrumb
               crumbs={pickCrumbs}
@@ -852,54 +857,10 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 />
               </div>
             )}
-            {/* One button cycling the four views, exactly like the graph's
-                projection cycle — not a four-button rail, which was a second kind of
-                control for the same job. */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                changeView(SIZE_VIEWS[(SIZE_VIEWS.indexOf(view) + 1) % SIZE_VIEWS.length])
-              }
-              aria-label={`View: ${SIZE_VIEW_LABEL[view]} — click to cycle`}
-              title={`${SIZE_VIEW_LABEL[view]} — click to cycle view`}
-            >
-              {ViewIcon ? (
-                <ViewIcon />
-              ) : (
-                <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
-              )}
-            </Button>
-            {/* B13 (owner ruling 2026-08-01): cycling views must not make controls
-                appear and disappear — the rail is stable across all four views.
-                The treemap is DOM with no camera, so orbit is disabled there, not
-                hidden. */}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={view === "treemap"}
-              onClick={() =>
-                updateViewSettings({
-                  ...viewSettings,
-                  autoRotate: viewSettings.autoRotate === "on" ? "off" : "on",
-                })
-              }
-              aria-label={
-                viewSettings.autoRotate === "on" ? "Stop auto-rotate" : "Start auto-rotate"
-              }
-              title={
-                view === "treemap"
-                  ? "The treemap has no camera to orbit"
-                  : viewSettings.autoRotate === "on"
-                    ? "Stop the camera orbit"
-                    : "Start the camera orbit"
-              }
-            >
-              {viewSettings.autoRotate === "on" ? "❚❚" : "▶"}
-            </Button>
-            {/* Scene settings + per-theme appearance. Rendered on the treemap too
-                (B13): fov and bloom act on the next 3D view, and a menu that only
-                exists sometimes reads as a bug. */}
+            {/* Toolbar parity (owner, round 4): the controls appear in the graph
+                tab's exact order — Nodes · Settings · cross-link · Export · ? ·
+                projection · orbit · Refresh. Scene settings render on the treemap
+                too (B13): a menu that only exists sometimes reads as a bug. */}
             <SettingsMenu
                 stage={stage}
                 appearance={appearance}
@@ -927,7 +888,78 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
                 <GraphTabIcon />
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!sizeGraph}
+              onClick={handleExport}
+              title={
+                sizeGraph
+                  ? "Download the current projection as a standalone page"
+                  : "Export works on the projections — cycle off the treemap first"
+              }
+            >
+              Export
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHelpOpen(true)}
+              aria-label="Help"
+            >
+              ?
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                changeView(SIZE_VIEWS[(SIZE_VIEWS.indexOf(view) + 1) % SIZE_VIEWS.length])
+              }
+              aria-label={`View: ${SIZE_VIEW_LABEL[view]} — click to cycle`}
+              title={`${SIZE_VIEW_LABEL[view]} — click to cycle view`}
+            >
+              {ViewIcon ? (
+                <ViewIcon />
+              ) : (
+                <LayoutDashboard size={15} strokeWidth={1.6} aria-hidden="true" />
+              )}
+            </Button>
+            {/* B13: orbit disabled on the treemap (no camera), never hidden. */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={view === "treemap"}
+              onClick={() =>
+                updateViewSettings({
+                  ...viewSettings,
+                  autoRotate: viewSettings.autoRotate === "on" ? "off" : "on",
+                })
+              }
+              aria-label={
+                viewSettings.autoRotate === "on" ? "Stop auto-rotate" : "Start auto-rotate"
+              }
+              title={
+                view === "treemap"
+                  ? "The treemap has no camera to orbit"
+                  : viewSettings.autoRotate === "on"
+                    ? "Stop the camera orbit"
+                    : "Start the camera orbit"
+              }
+            >
+              {viewSettings.autoRotate === "on" ? "❚❚" : "▶"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setPicked(null);
+                setRefreshTick((t) => t + 1);
+              }}
+            >
+              Refresh
+            </Button>
           </div>
+          {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
       {/* Tiles */}
       {view === "treemap" && (
@@ -990,6 +1022,14 @@ export function SizeTab({ project, onOpenGraph }: SizeTabProps) {
           {formatBytes(data.total_bytes)} indexed across{" "}
           {data.file_count.toLocaleString()} files
         </span>
+        {/* The focused level's totals — they lived on the drill row until the
+            trail moved to the header (breadcrumb parity, round 4). */}
+        {focus && (
+          <span>
+            {node.name}: {formatBytes(node.bytes)} ·{" "}
+            {node.fileCount.toLocaleString()} files
+          </span>
+        )}
         {/* D11: the two causes stay distinct — the sliver filter and the node
             budget are different facts, and conflating them was the bug. Each
             notice fires only when ITS threshold was genuinely hit, names its own

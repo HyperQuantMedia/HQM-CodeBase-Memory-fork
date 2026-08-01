@@ -113,11 +113,12 @@ describe("collapsible sidebar panels", () => {
     expect(screen.getByText("Node types")).toBeInTheDocument();
   });
 
-  it("lets the open section fill the column when its neighbour folds away", async () => {
-    /* The section was handed the height and then wasted it: CollapsibleSection
-     * rendered its body as a bare flex child, so the content sized to itself and
-     * the rest of the box stayed empty — indistinguishable from never having been
-     * given the space. */
+  it("keeps the open section content-height in the floating card (C7 round 4)", async () => {
+    /* Round 4 (owner): the open panels float over the map as a content-height
+     * card — a section no longer stretches to fill a full-height column,
+     * because there is no full-height column; the map owns the width. The
+     * section may only SHRINK (flex-[0_1_auto] min-h-0) when the card hits the
+     * viewport cap, scrolling internally. */
     mockFetch();
     render(<GraphTab project="demo" />);
     await screen.findByText("Filters");
@@ -126,8 +127,9 @@ describe("collapsible sidebar panels", () => {
     const filters = screen
       .getByRole("button", { name: /Filters/ })
       .closest("[data-collapsible]")!;
-    expect(filters.className).toContain("flex-1");
-    /* The body wrapper has to grow too, not merely exist. */
+    expect(filters.className).toContain("flex-[0_1_auto]");
+    expect(filters.className).toContain("min-h-0");
+    /* The body wrapper still has to be able to shrink-and-scroll. */
     const body = filters.querySelector(".flex-1.min-h-0");
     expect(body).not.toBeNull();
   });

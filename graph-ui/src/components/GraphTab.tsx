@@ -609,21 +609,23 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
   }
 
   return (
-    <div className="h-full flex">
-      {/* C7 round 3: collapsed sections dock as vertical tabs on this rail —
-          individually — and the wide column exists only while something is open. */}
-      {(!filtersOpen || !foldersOpen) && (
-        <div className="w-8 border-r border-border/30 bg-sidebar/90 flex flex-col items-center gap-1 py-2 shrink-0">
-          {!filtersOpen && (
-            <CollapsedRailTab
-              title="Filters"
-              onOpen={() => {
-                saveFlag("cbm-filters-open", true);
-                setFiltersOpen(true);
-              }}
-            />
-          )}
-          {!foldersOpen && (
+    <div className="h-full flex relative">
+      {/* C7 round 4 (owner): the rail is always there; Filters' tab sits at the
+          top, Folders' tab at the MIDDLE — each tab lives roughly where its
+          panel's content would. Open panels float over the map (below), so the
+          centre view owns the full width either way. */}
+      <div className="w-8 border-r border-border/30 bg-sidebar/90 flex flex-col items-center gap-1 py-2 shrink-0">
+        {!filtersOpen && (
+          <CollapsedRailTab
+            title="Filters"
+            onOpen={() => {
+              saveFlag("cbm-filters-open", true);
+              setFiltersOpen(true);
+            }}
+          />
+        )}
+        {!foldersOpen && (
+          <div className="my-auto">
             <CollapsedRailTab
               title="Folders"
               onOpen={() => {
@@ -631,13 +633,15 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
                 setFoldersOpen(true);
               }}
             />
-          )}
-        </div>
-      )}
-      {/* Left sidebar — resizable, present only while a section is open */}
+          </div>
+        )}
+      </div>
+      {/* Open sections float over the map as a content-height card — the same
+          give-the-space-back behaviour the right detail panel has. The map runs
+          full-bleed underneath. */}
       {(filtersOpen || foldersOpen) && (
       <div
-        className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
+        className="absolute left-8 top-0 z-20 max-h-full flex flex-col bg-sidebar/95 backdrop-blur-md border-r border-b border-border/40 rounded-br-lg overflow-hidden"
         style={{ width: leftWidth }}
       >
         {/* Filters at the top, folders below — either can fold away to give the
@@ -652,11 +656,9 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
               return !v;
             })
           }
-          /* Filters is capped at 55% so it cannot crowd out the folder tree — but
-              only while the tree is actually open. */
-          className={`border-b border-border/40 ${
-            foldersOpen ? "max-h-[55%] shrink-0" : "flex-1 min-h-0"
-          }`}
+          /* Content-height inside the floating card; both sections shrink with
+              internal scroll when the card hits the viewport's max height. */
+          className="border-b border-border/40 flex-[0_1_auto] min-h-0"
         >
           <FilterPanel
             data={data}
@@ -704,7 +706,7 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
               return !v;
             })
           }
-          className="flex-1 min-h-0"
+          className="flex-[0_1_auto] min-h-0"
           actions={
             <span className="text-[10px] text-ink-dim tabular-nums">
               {filteredData.nodes.length.toLocaleString()}
@@ -719,19 +721,20 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
           />
         </CollapsibleSection>
         )}
+        {/* The drag edge rides the card itself now that the card floats. */}
+        <div className="absolute right-0 inset-y-0 flex">
+          <ResizeHandle
+            side="left"
+            onResize={(d) => {
+              setLeftWidth((w) => {
+                const nw = Math.max(150, Math.min(500, w + d));
+                saveWidth("cbm-left-w", nw);
+                return nw;
+              });
+            }}
+          />
+        </div>
       </div>
-      )}
-      {(filtersOpen || foldersOpen) && (
-      <ResizeHandle
-        side="left"
-        onResize={(d) => {
-          setLeftWidth((w) => {
-            const nw = Math.max(150, Math.min(500, w + d));
-            saveWidth("cbm-left-w", nw);
-            return nw;
-          });
-        }}
-      />
       )}
 
       {/* Graph area */}
