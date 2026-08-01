@@ -332,6 +332,11 @@ suite as evidence that a visual change works.
 - [`bugs.md`](bugs.md) · [`backlog.md`](backlog.md) — the two working registers
 - [`plans/2026-07-31-v0.2.0-cycle.md`](plans/2026-07-31-v0.2.0-cycle.md) — **the approved cycle**:
   first upstream pull, hardening, parity sweep, `v0.9.0-hqm-v0.2.0`, and every pending decision
+- [`decisions/2026-08-01-b1-rounds-and-the-v020-build-out.md`](decisions/2026-08-01-b1-rounds-and-the-v020-build-out.md)
+  — the day's UI rulings, one record
+- [`decisions/2026-08-01-ingest-contracts-a1-a2.md`](decisions/2026-08-01-ingest-contracts-a1-a2.md)
+  — batch indexing and CROSS_SOURCE: the engine contracts, the naming deviation, the
+  two-merges topology lesson
 - [`decisions/2026-07-31-stay-on-the-v0.9.0-line.md`](decisions/2026-07-31-stay-on-the-v0.9.0-line.md)
   — why we sit on v0.9.0 by choice, why the daemon waits, the version rule
 - [`notes/2026-07-31-upstream-issue-overlap.md`](notes/2026-07-31-upstream-issue-overlap.md) —
@@ -367,6 +372,15 @@ suite as evidence that a visual change works.
   `/api/processes` + `/api/kill` (Windows path and its guard)
 
 ## Reference
+
+- **Serve/stop the local server:** `hqm/scripts/serve-cartograph.bat [port|stop]` — relative
+  paths, works from any clone; the server window holds the logs; `stop` before any relink.
+  Found-by-running traps recorded in `92461977` (`start /b` dies with the console; `timeout`
+  needs stdin).
+- **The `cbm-*` localStorage inventory grew on 2026-08-01** — per-project keys now include
+  `cbm-node-budget:<p>` (shared by both views, C10) and `cbm-disabled-{labels,edges,kinds}:<p>`
+  (A3a exclusion sets), on top of the earlier global set. The naming-residue decision (ledger
+  item 12) prices a rename against exactly this list.
 
 - **Build and run (two recipes that each cost real time to find):**
   - C + UI: `MSYSTEM=CLANG64 /c/msys64/usr/bin/bash -lc 'export PATH="$PATH:/c/Program Files/nodejs:/c/Program Files/Git/cmd"; cd /f/Git/HQM-CodeBase-Memory-fork && scripts/build.sh --with-ui --version v0.9.0-hqm-v0.1.0 CC=clang CXX=clang++'` — three traps: plain `bash -lc` picks Git Bash and fails with `compiler 'clang' not found in PATH`; `MSYSTEM` must be set *before* the login shell starts (the shell reads it to configure the toolchain PATH), so exporting it inside `-lc` is too late; and an MSYS login shell drops the Windows PATH, so **both `nodejs` and `Git/cmd` have to be exported back**. Node's absence fails loudly. **Git's absence fails as 23 test failures** — see the test-invocation note below.

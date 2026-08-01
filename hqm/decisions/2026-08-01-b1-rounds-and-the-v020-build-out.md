@@ -85,6 +85,29 @@ existed; round 4 moved the trail to the header and silently took the exit with i
 restored it as a toolbar `↑ Up` (shown only while drilled) plus Esc (clear pick first, then
 climb). Lesson banked: **when a layout moves, re-check what earlier removals leaned on.**
 
+## Sort keys tell the truth (B12)
+
+The size panel's button said *count* and sorted **bytes** — a control that lies is worse than
+two controls. The sort vocabulary grew real keys: `name / size / files`, distinct glyphs
+(A↕Z, wide↕narrow, 0↕1), each key's own natural first direction, and a stored legacy `count`
+order migrates to `size` — which is what it always actually did. The filter chips keep
+`name / count`, where count is true.
+
+## One budget, honest notices (C10 + D11)
+
+ONE node budget per project, shared by both views — the graph tab's control verbatim, stored
+under the graph's historical key; the size map's hardcoded 8,000 survives only as fallback.
+The omission notices split by cause and fire only on their own threshold: the sliver filter
+("too small to draw at this size") and the budget ("N lightest items over the X-node budget —
+raise the node budget or drill in"), both amber at 14px over the footer's 10px. Conflating the
+two causes was the D11 bug; the budget being the user's own is what makes the notice
+actionable.
+
+## The right panel, stacked (C13 — owner's answer to the direct question)
+
+Opens **only when something is picked**, and stacks: drill-path totals above, the picked
+node's details and its children below. The always-on variant was offered and declined.
+
 ## Filters persist as exclusions (A3a)
 
 Per project, stored as the DISABLED set (`cbm-disabled-labels/edges/kinds:<project>`),
