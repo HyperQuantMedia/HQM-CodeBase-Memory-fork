@@ -101,7 +101,10 @@ is why this is unverified rather than confirmed.
 
 ### B3 — Colours tab does nothing for the size view
 
-**Severity:** low · **Status:** open, deliberate stub
+**Severity:** low · **Status:** **CLOSED 2026-08-01, `7f24d030`** — kinds joined the override
+store (`colorForKind`, overrides in `appearance.labelColors` — lowercase kinds cannot collide
+with Capitalised labels), the one Colors tab lists the kinds in the size view, and every
+kind-coloured surface resolves through the override chain. Owner eye pending in the next round.
 
 `SettingsMenu`'s Colours tab overrides colours resolved through `colorForLabel()`
 (`LABEL_COLORS`). The size view colours by file *kind* out of `KIND_COLORS`. Passing kind
