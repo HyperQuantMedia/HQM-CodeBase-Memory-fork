@@ -47,7 +47,12 @@ import { CollapsedRailTab, CollapsibleSection } from "./CollapsibleSection";
 import { Breadcrumb } from "./Breadcrumb";
 import { HelpModal } from "./HelpModal";
 import type { GraphNode, GraphData, RepoInfo } from "../lib/types";
-import { colorForLabel, colorForStatus, setLabelColorOverrides } from "../lib/colors";
+import {
+  colorForLabel,
+  colorForStatus,
+  setEdgeColorOverrides,
+  setLabelColorOverrides,
+} from "../lib/colors";
 import { downloadStaticPage } from "../lib/exportStatic";
 import { resolvedTheme, themeVar } from "../lib/theme";
 import { stageForTheme } from "../lib/sceneInk";
@@ -129,6 +134,11 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
   useEffect(() => {
     setLabelColorOverrides(appearance.labelColors);
   }, [appearance.labelColors]);
+  /* Same shape for edges (Phase 4a): chips and any non-React caller read the
+   * module store; the renderer gets the record as a prop so geometry re-derives. */
+  useEffect(() => {
+    setEdgeColorOverrides(appearance.edgeColors);
+  }, [appearance.edgeColors]);
   const canvasBg = useMemo(
     () => themeVar("--color-canvas", stage === "light" ? "#f2f4fa" : "#06090f"),
     [themeTick, stage],
@@ -355,6 +365,10 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
 
   const labelsInGraph = useMemo(
     () => (data ? [...new Set(data.nodes.map((n) => n.label))] : []),
+    [data],
+  );
+  const edgeTypesInGraph = useMemo(
+    () => (data ? [...new Set(data.edges.map((e) => e.type))] : []),
     [data],
   );
 
@@ -859,6 +873,7 @@ export function GraphTab({ project, onOpenSizeMap }: GraphTabProps) {
                 view={view}
                 onViewChange={updateView}
                 labels={labelsInGraph}
+                edgeTypes={edgeTypesInGraph}
               />
               {onOpenSizeMap && (
                 <Button

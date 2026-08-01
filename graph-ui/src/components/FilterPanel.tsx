@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { colorForLabel, STATUS_LEGEND } from "../lib/colors";
+import { colorForLabel, STATUS_LEGEND, colorForEdge } from "../lib/colors";
 import type { GraphData } from "../lib/types";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { SortControl } from "./SortControl";
@@ -215,13 +215,18 @@ export function FilterPanel({
               <div className="flex flex-wrap gap-1">
                 {sortedEdgeTypes.map(([type, count]) => {
                   const on = enabledEdgeTypes.has(type);
+                  const c = colorForEdge(type);
                   return (
                     <button
                       key={type}
                       onClick={() => onToggleEdgeType(type)}
                       className={`inline-flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[10px] font-medium transition-all border ${
-                        on ? "border-border/50 bg-foreground/[0.03] text-ink-soft" : "border-transparent opacity-20 text-ink-dim"
+                        on ? "" : "border-transparent opacity-20 text-ink-dim"
                       }`}
+                      /* Phase 4a: chips carry the edge system's colour — the same
+                         value the rendered links use — on the chip surface, the
+                         recipe item 4 settled for node chips. */
+                      style={on ? { backgroundColor: c + "20", borderColor: c + "50", color: c } : undefined}
                     >
                       {type.replace(/_/g, " ").toLowerCase()}
                       <span className="text-ink-faint tabular-nums">{count.toLocaleString()}</span>

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { GraphNode, GraphEdge } from "../lib/types";
 import { edgeIntensityScale, edgeCurveSegments } from "../lib/density";
 import { inkEdge, multiplyTint, type Stage } from "../lib/sceneInk";
+import { colorForEdge } from "../lib/colors";
 
 interface EdgeLinesProps {
   nodes: GraphNode[];
@@ -20,6 +21,9 @@ interface EdgeLinesProps {
    * Used for cross-galaxy edges where source lives in the primary graph
    * and target lives in a linked project's offset-adjusted nodes. */
   targetNodes?: GraphNode[];
+  /* Per-type colour overrides (appearance.edgeColors). Passed as a prop rather
+   * than read from module state so an edit re-derives the geometry. */
+  edgeColors?: Record<string, string>;
 }
 
 function getClusterKey(fp?: string): string {
@@ -28,51 +32,32 @@ function getClusterKey(fp?: string): string {
   return parts.slice(0, Math.min(2, parts.length)).join("/");
 }
 
-/* Edge type → color (matches the filter panel) */
-const EDGE_TYPE_COLORS: Record<string, string> = {
-  CALLS: "#1DA27E",
-  IMPORTS: "#3b82f6",
-  DEFINES: "#a855f7",
-  DEFINES_METHOD: "#a855f7",
-  CONTAINS_FILE: "#22c55e",
-  CONTAINS_FOLDER: "#22c55e",
-  CONTAINS_PACKAGE: "#22c55e",
-  HANDLES: "#eab308",
-  IMPLEMENTS: "#f97316",
-  HTTP_CALLS: "#e11d48",
-  ASYNC_CALLS: "#ec4899",
-  GRPC_CALLS: "#f59e0b",
-  GRAPHQL_CALLS: "#e879f9",
-  TRPC_CALLS: "#a78bfa",
-  CROSS_HTTP_CALLS: "#fb923c",
-  CROSS_ASYNC_CALLS: "#fb7185",
-  CROSS_GRPC_CALLS: "#fbbf24",
-  CROSS_GRAPHQL_CALLS: "#f0abfc",
-  CROSS_TRPC_CALLS: "#c4b5fd",
-  CROSS_CHANNEL: "#fdba74",
-  MEMBER_OF: "#64748b",
-  TESTS_FILE: "#06b6d4",
-};
-
-const DEFAULT_EDGE_COLOR = "#1C8585";
+/* Edge colours come from the shared system in lib/colors.ts (Phase 4a): the
+ * same table the relationship chips read, override-aware, hash-hued for
+ * foreign types. The private copy that lived here could not be overridden and
+ * silently disagreed with the panel the moment either side changed. */
 
 /* Colour cache: a 166k-edge graph resolves ~20 distinct strings, so parsing one
- * THREE.Color per edge was pure waste. */
-function colorTable(stage: Stage): Map<string, [number, number, number]> {
+ * THREE.Color per edge was pure waste. Built over the types actually present. */
+function colorTable(
+  stage: Stage,
+  edges: readonly { type?: string }[],
+  overrides?: Record<string, string>,
+): Map<string, [number, number, number]> {
   const table = new Map<string, [number, number, number]>();
   const tmp = new THREE.Color();
-  for (const [type, hex] of Object.entries(EDGE_TYPE_COLORS)) {
+  const put = (key: string, hex: string) => {
     tmp.set(hex);
     table.set(
-      type,
+      key,
       stage === "light" ? inkEdge(tmp.r, tmp.g, tmp.b) : [tmp.r, tmp.g, tmp.b],
     );
+  };
+  for (const e of edges) {
+    const t = e.type ?? "";
+    if (!table.has(t)) put(t, t ? (overrides?.[t] ?? colorForEdge(t)) : "#1C8585");
   }
-  tmp.set(DEFAULT_EDGE_COLOR);
-  table.set(
-    "",
-    stage === "light" ? inkEdge(tmp.r, tmp.g, tmp.b) : [tmp.r, tmp.g, tmp.b],
-  );
+  if (!table.has("")) put("", "#1C8585");
   return table;
 }
 
@@ -85,6 +70,7 @@ export function EdgeLines({
   curve = 0,
   stage = "dark",
   targetNodes,
+  edgeColors,
 }: EdgeLinesProps) {
   const geometry = useMemo(() => {
     /* Shrink per-edge glow as the edge count grows so the additively-blended
@@ -99,7 +85,7 @@ export function EdgeLines({
     const densityScale =
       (stage === "light" ? Math.sqrt(rawScale) : rawScale) * brightness;
     const light = stage === "light";
-    const table = colorTable(stage);
+    const table = colorTable(stage, edges, edgeColors);
 
     /* Subdivisions per edge. 1 means a straight chord — the original two-vertex
      * form — so the un-curved path costs exactly what it always did. */
@@ -244,7 +230,7 @@ export function EdgeLines({
       new THREE.BufferAttribute(colors.slice(0, vertex * 3), 3),
     );
     return geo;
-  }, [nodes, edges, highlightedIds, targetNodes, brightness, curve, stage, opacity]);
+  }, [nodes, edges, highlightedIds, targetNodes, brightness, curve, stage, opacity, edgeColors]);
 
   const light = stage === "light";
   return (

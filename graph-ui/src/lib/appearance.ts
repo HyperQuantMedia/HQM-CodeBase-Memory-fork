@@ -33,6 +33,8 @@ export interface Appearance {
   nodeScale: number;
   /** Per-label colour overrides; absent label = palette default. */
   labelColors: Record<string, string>;
+  /** Per-edge-type colour overrides (Phase 4a); absent type = palette default. */
+  edgeColors: Record<string, string>;
   /** Where the path light takes its colour. */
   pathLightColorMode: PathLightColorMode;
   /** The colour used when the mode is "custom". */
@@ -68,6 +70,7 @@ export const APPEARANCE_DEFAULTS: Record<Stage, Appearance> = {
     edgeCurve: 0.35,
     nodeScale: 1,
     labelColors: {},
+    edgeColors: {},
     pathLightColorMode: "strand",
     pathLightColor: "#ffce6e",
   },
@@ -86,6 +89,7 @@ export const APPEARANCE_DEFAULTS: Record<Stage, Appearance> = {
      * 47k marks a pixel or two across. */
     nodeScale: 1.45,
     labelColors: {},
+    edgeColors: {},
     pathLightColorMode: "strand",
     /* The dark theme's pale gold is invisible on paper; this is the light
      * theme's own accent. */
@@ -147,6 +151,7 @@ export function clampAppearance(stage: Stage, raw: unknown): Appearance {
     edgeCurve: clampNum(stage, "edgeCurve", r.edgeCurve),
     nodeScale: clampNum(stage, "nodeScale", r.nodeScale),
     labelColors: cleanLabelColors(r.labelColors),
+    edgeColors: cleanLabelColors(r.edgeColors),
     pathLightColorMode:
       r.pathLightColorMode === "theme" ||
       r.pathLightColorMode === "custom" ||
@@ -161,8 +166,8 @@ export type AppearanceSet = Record<Stage, Appearance>;
 
 export function defaultAppearanceSet(): AppearanceSet {
   return {
-    dark: { ...APPEARANCE_DEFAULTS.dark, labelColors: {} },
-    light: { ...APPEARANCE_DEFAULTS.light, labelColors: {} },
+    dark: { ...APPEARANCE_DEFAULTS.dark, labelColors: {}, edgeColors: {} },
+    light: { ...APPEARANCE_DEFAULTS.light, labelColors: {}, edgeColors: {} },
   };
 }
 
@@ -190,7 +195,7 @@ function migrateLegacy(): AppearanceSet | null {
   if (!found) return null;
   return {
     dark: clampAppearance("dark", merged),
-    light: { ...APPEARANCE_DEFAULTS.light, labelColors: {} },
+    light: { ...APPEARANCE_DEFAULTS.light, labelColors: {}, edgeColors: {} },
   };
 }
 
@@ -226,6 +231,7 @@ export function isAppearanceDefault(stage: Stage, a: Appearance): boolean {
     a.nodeScale === d.nodeScale &&
     a.pathLightColorMode === d.pathLightColorMode &&
     a.pathLightColor === d.pathLightColor &&
-    Object.keys(a.labelColors).length === 0
+    Object.keys(a.labelColors).length === 0 &&
+    Object.keys(a.edgeColors).length === 0
   );
 }

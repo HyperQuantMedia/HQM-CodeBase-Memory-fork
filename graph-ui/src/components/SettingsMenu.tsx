@@ -22,7 +22,7 @@ import {
   type LeafShape,
   type ViewMode,
 } from "../lib/viewLayout";
-import { defaultColorForLabel } from "../lib/colors";
+import { defaultColorForEdge, defaultColorForLabel } from "../lib/colors";
 
 type TabId = "view" | "display" | "colors" | "animation";
 
@@ -44,6 +44,9 @@ interface SettingsMenuProps {
   onViewChange: (next: ViewSettings) => void;
   /** Labels present in the loaded graph — the Colors tab lists exactly these. */
   labels: string[];
+  /** Edge types present in the loaded graph (Phase 4a) — the Colors tab grows a
+   * Relationships section when any are passed. */
+  edgeTypes?: string[];
 }
 
 const STAGE_LABEL: Record<Stage, string> = { dark: "Dark", light: "Light" };
@@ -172,6 +175,7 @@ export function SettingsMenu({
   view,
   onViewChange,
   labels,
+  edgeTypes = [],
 }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<TabId>("view");
@@ -391,9 +395,12 @@ export function SettingsMenu({
                 <div className="flex items-center justify-between gap-2">
                   <ThemeScope stage={stage} />
                   <button
-                    onClick={() => setDisplay({ labelColors: {} })}
+                    onClick={() => setDisplay({ labelColors: {}, edgeColors: {} })}
                     className="text-[10px] text-primary/70 hover:text-primary transition-colors disabled:opacity-30"
-                    disabled={Object.keys(appearance.labelColors).length === 0}
+                    disabled={
+                      Object.keys(appearance.labelColors).length === 0 &&
+                      Object.keys(appearance.edgeColors).length === 0
+                    }
                   >
                     Reset colors
                   </button>
@@ -442,11 +449,59 @@ export function SettingsMenu({
                     );
                   })}
                 </div>
+                {edgeTypes.length > 0 && (
+                  <>
+                    <p className="text-[10px] font-medium text-ink-soft uppercase tracking-wider pt-2 border-t border-border/30">
+                      Relationships
+                    </p>
+                    <div className="space-y-1.5">
+                      {[...edgeTypes].sort((a, b) => a.localeCompare(b)).map((type) => {
+                        const overridden = appearance.edgeColors[type] !== undefined;
+                        const value =
+                          appearance.edgeColors[type] ?? defaultColorForEdge(type);
+                        return (
+                          <div key={type} className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={normalizeForPicker(value)}
+                              onChange={(e) =>
+                                setDisplay({
+                                  edgeColors: {
+                                    ...appearance.edgeColors,
+                                    [type]: e.target.value,
+                                  },
+                                })
+                              }
+                              className="w-6 h-6 rounded border border-border/60 bg-transparent cursor-pointer shrink-0"
+                              aria-label={`${type} color`}
+                            />
+                            <span className="text-[11px] text-foreground/65 truncate flex-1">
+                              {type.replace(/_/g, " ").toLowerCase()}
+                            </span>
+                            {overridden && (
+                              <button
+                                onClick={() => {
+                                  const next = { ...appearance.edgeColors };
+                                  delete next[type];
+                                  setDisplay({ edgeColors: next });
+                                }}
+                                className="text-[9px] text-ink-dim hover:text-foreground/70 transition-colors shrink-0"
+                                title="Back to the palette default"
+                              >
+                                auto
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
                 <p className="text-[9px] text-ink-dim pt-1 border-t border-border/30">
                   Stored per theme — a colour that works on the void does not
                   necessarily work on paper. Defaults are the built-in palette;
-                  unknown labels get a stable generated hue. Custom colors skip
-                  the contrast checks.
+                  unknown labels and relationship types get a stable generated
+                  hue. Custom colors skip the contrast checks.
                 </p>
               </>
             )}

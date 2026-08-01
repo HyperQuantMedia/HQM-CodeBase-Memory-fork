@@ -56,6 +56,53 @@ export function defaultColorForLabel(label: string): string {
   return LABEL_COLORS[label] ?? hashHueColor(label);
 }
 
+/* ── Edge type → colour (Phase 4a, wanted-list item 5) ────────────
+ * Promoted out of EdgeLines.tsx, where this table lived as a private constant:
+ * a colour only the renderer could see meant the relationship chips could not
+ * carry it and nothing could override it. One system now — same override
+ * shape as labels, same hash fallback so foreign edge types (overlay ingests:
+ * RELATED, LINKS_TO, CROSS_SOURCE, …) each get a stable distinct hue instead
+ * of one shared teal. */
+export const EDGE_COLORS: Record<string, string> = {
+  CALLS: "#1DA27E",
+  IMPORTS: "#3b82f6",
+  DEFINES: "#a855f7",
+  DEFINES_METHOD: "#a855f7",
+  CONTAINS_FILE: "#22c55e",
+  CONTAINS_FOLDER: "#22c55e",
+  CONTAINS_PACKAGE: "#22c55e",
+  HANDLES: "#eab308",
+  IMPLEMENTS: "#f97316",
+  HTTP_CALLS: "#e11d48",
+  ASYNC_CALLS: "#ec4899",
+  GRPC_CALLS: "#f59e0b",
+  GRAPHQL_CALLS: "#e879f9",
+  TRPC_CALLS: "#a78bfa",
+  CROSS_HTTP_CALLS: "#fb923c",
+  CROSS_ASYNC_CALLS: "#fb7185",
+  CROSS_GRPC_CALLS: "#fbbf24",
+  CROSS_GRAPHQL_CALLS: "#f0abfc",
+  CROSS_TRPC_CALLS: "#c4b5fd",
+  CROSS_CHANNEL: "#fdba74",
+  MEMBER_OF: "#64748b",
+  TESTS_FILE: "#06b6d4",
+};
+
+let edgeOverrides: Record<string, string> = {};
+
+export function setEdgeColorOverrides(overrides: Record<string, string>) {
+  edgeOverrides = overrides;
+}
+
+export function colorForEdge(type: string): string {
+  return edgeOverrides[type] ?? EDGE_COLORS[type] ?? hashHueColor(type);
+}
+
+/* The palette default for an edge type, ignoring overrides. */
+export function defaultColorForEdge(type: string): string {
+  return EDGE_COLORS[type] ?? hashHueColor(type);
+}
+
 /* Dead-code status → color (matches layout3d.c status strings).
  *   dead     zero callers + zero usages, not entry/test/exported
  *   single   exactly one caller

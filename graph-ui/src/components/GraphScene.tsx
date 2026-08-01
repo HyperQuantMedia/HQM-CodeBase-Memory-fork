@@ -247,6 +247,7 @@ export function GraphScene({
         edges={data.edges}
         highlightedIds={highlightedIds}
         brightness={display.edgeBrightness}
+        edgeColors={display.edgeColors}
         curve={edgeCurve}
         stage={stage}
       />
@@ -284,6 +285,7 @@ export function GraphScene({
             highlightedIds={null}
             opacity={0.28}
             brightness={display.edgeBrightness}
+        edgeColors={display.edgeColors}
             stage={stage}
           />
           <NodeCloud
@@ -317,6 +319,7 @@ export function GraphScene({
               highlightedIds={null}
               opacity={0.3}
               brightness={display.edgeBrightness}
+        edgeColors={display.edgeColors}
               curve={edgeCurve}
               stage={stage}
             />
@@ -340,6 +343,7 @@ export function GraphScene({
                 highlightedIds={highlightedIds}
                 opacity={0.85}
                 brightness={display.edgeBrightness}
+        edgeColors={display.edgeColors}
                 curve={edgeCurve}
                 stage={stage}
               />
